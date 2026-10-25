@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#05080a">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Steppe Hawk — UAV Strike Sim</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<!-- touch controls (shown on touch devices while playing) -->
+<div id="touch" class="hidden">
+  <div class="tgroup left">
+    <button data-act="pause" class="tb small">II</button>
+    <button data-act="mode" class="tb small">MODE</button>
+    <button data-act="orbit" class="tb small">ORBIT</button>
+    <button data-act="help" class="tb small">?</button>
+  </div>
+  <div class="tgroup right">
+    <div class="trow">
+      <button data-act="zoomout" class="tb">−</button>
+      <button data-act="zoomin" class="tb">+</button>
+    </div>
+    <div class="trow">
+      <button data-act="weapon" class="tb">WPN</button>
+      <button data-act="flare" class="tb warn">FLR</button>
+    </div>
+    <div class="trow">
+      <button data-act="lock" class="tb">TRK</button>
+      <button data-act="fire" class="tb fire">FIRE</button>
+    </div>
+  </div>
+</div>
+
+<div id="menu" class="overlay">
+  <div class="panel wide">
+    <div class="title">STEPPE HAWK</div>
+    <div class="subtitle">UAV STRIKE SIMULATOR // UKRAINE</div>
+    <div id="missionList"></div>
+    <details class="controls">
+      <summary>CONTROLS</summary>
+      <div class="cols">
+        <div>
+          <b>Touch (Android)</b>
+          <p>Drag: slew the camera<br>Pinch / + −: zoom<br>Tap: lock a track<br>TRK: lock at the crosshair<br>FIRE / WPN / FLR: fire, switch weapon, flares<br>Tap the map: move the camera there</p>
+        </div>
+        <div>
+          <b>Keyboard / Mouse</b>
+          <p>Drag or WASD/arrows: slew<br>Wheel or Q/E: zoom<br>Click / Space: lock track<br>F or Enter: fire &nbsp; 1/2: weapon<br>C: flares &nbsp; T: thermal mode &nbsp; O: orbit<br>H: help &nbsp; Esc/P: pause</p>
+        </div>
+      </div>
+      <p class="note">The laser guides your munitions to the crosshair until impact, so keep it on the target. Lock and zoom in on a target to get positive ID (PID). The mission fails if you go over the civilian-casualty limit.</p>
+    </details>
+    <div class="foot">A work of fiction. Units, places and events are invented.</div>
+  </div>
+</div>
+
+<div id="brief" class="overlay hidden">
+  <div class="panel">
+    <div class="ptitle" id="bTitle"></div>
+    <div id="bBody"></div>
+    <div class="btns">
+      <button id="bBack" class="btn ghost">BACK</button>
+      <button id="bStart" class="btn">COMMENCE</button>
+    </div>
+  </div>
+</div>
+
+<div id="pause" class="overlay hidden">
+  <div class="panel narrow">
+    <div class="ptitle">PAUSED</div>
+    <div class="btns col">
+      <button id="pResume" class="btn">RESUME</button>
+      <button id="pRestart" class="btn ghost">RESTART MISSION</button>
+      <button id="pQuit" class="btn ghost">ABORT TO MENU</button>
+    </div>
+  </div>
+</div>
+
+<div id="end" class="overlay hidden">
+  <div class="panel">
+    <div class="ptitle" id="eTitle"></div>
+    <div id="eBody"></div>
+    <div class="btns">
+      <button id="eMenu" class="btn ghost">MENU</button>
+      <button id="eRetry" class="btn ghost">RETRY</button>
+      <button id="eNext" class="btn">NEXT MISSION</button>
+    </div>
+  </div>
+</div>
+
+<div id="rotate" class="hidden"><div>⟳<br>Rotate your device to landscape</div></div>
+
+<script src="js/game.js"></script>
+<script>
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+}
+</script>
+</body>
+</html>
