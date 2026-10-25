@@ -78,16 +78,60 @@ const PAL_NAMES = ['WHOT', 'BHOT', 'TV'];
 // ============================================================ canvas
 const cv = document.getElementById('game');
 const ctx = cv.getContext('2d');
-let W = 0, H = 0, DPR = 1, UI = 1;
+// W/H are the camera view size; SW/SH the whole screen. On a split layout (half-folded foldable,
+// tall portrait screen) the view takes one region and PANEL holds the touch controls and minimap.
+let W = 0, H = 0, SW = 0, SH = 0, DPR = 1, UI = 1;
+const VR = { x: 0, y: 0 };
+let PANEL = null, MMP = null, LAYOUT = 'full', foldInfo = null, renderScale = 1;
 const isTouch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+const isNative = !!window.SteppeHawkNative;
+function segments() {
+  const f = foldInfo; // from the Android app (Jetpack WindowManager), in CSS px
+  if (f && (f.state === 'HALF_OPENED' || f.separating)) {
+    if (f.orientation === 'HORIZONTAL') return [{ x: 0, y: 0, w: SW, h: f.y }, { x: 0, y: f.y + f.h, w: SW, h: SH - f.y - f.h }];
+    return [{ x: 0, y: 0, w: f.x, h: SH }, { x: f.x + f.w, y: 0, w: SW - f.x - f.w, h: SH }];
+  }
+  const vs = window.viewport && window.viewport.segments; // Viewport Segments API (Chrome on foldables)
+  if (vs && vs.length === 2) return vs.map(r => ({ x: r.x, y: r.y, w: r.width, h: r.height }));
+  return null;
+}
 function resize() {
-  DPR = Math.min(window.devicePixelRatio || 1, isTouch ? 1.75 : 2);
-  W = window.innerWidth; H = window.innerHeight;
-  cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+  SW = window.innerWidth; SH = window.innerHeight;
+  DPR = Math.max(0.75, Math.min(window.devicePixelRatio || 1, isTouch ? 1.75 : 2) * renderScale);
+  cv.width = Math.round(SW * DPR); cv.height = Math.round(SH * DPR);
+  let view = { x: 0, y: 0, w: SW, h: SH };
+  PANEL = null; LAYOUT = 'full';
+  if (isTouch) {
+    const seg = segments();
+    if (seg && seg.every(r => r.w > 140 && r.h > 140)) {
+      // tabletop (hinge horizontal): view on the upper half, controls on the lower half.
+      // book (hinge vertical): view on the left page, controls on the right page.
+      view = seg[0]; PANEL = seg[1]; LAYOUT = seg[1].y > seg[0].y ? 'tabletop' : 'book';
+    } else if (SH > SW * 1.25) {
+      const vh = Math.round(SH * 0.64);
+      view = { x: 0, y: 0, w: SW, h: vh }; PANEL = { x: 0, y: vh, w: SW, h: SH - vh }; LAYOUT = 'portrait';
+    }
+  }
+  VR.x = view.x; VR.y = view.y; W = view.w; H = view.h;
   UI = clamp(Math.min(W, H) / 640, 0.72, 1.15);
-  document.getElementById('rotate').classList.toggle('hidden', !(isTouch && H > W * 1.05));
+  layoutTouch();
+}
+function layoutTouch() {
+  const el = document.getElementById('touch');
+  MMP = null;
+  el.classList.toggle('deck', !!PANEL);
+  const stack = !!PANEL && PANEL.h > PANEL.w * 1.1;
+  el.classList.toggle('stack', stack);
+  if (PANEL) {
+    Object.assign(el.style, { left: PANEL.x + 'px', top: PANEL.y + 'px', width: PANEL.w + 'px', height: PANEL.h + 'px' });
+    // the minimap moves into the panel when it fits beside (or above) the buttons
+    const s = Math.floor(stack ? Math.min(PANEL.w - 24, PANEL.h - 270, 260) : Math.min(PANEL.h - 24, PANEL.w - 268, 260));
+    if (s >= 90) MMP = stack ? { x: PANEL.x + (PANEL.w - s) / 2, y: PANEL.y + 14, s } : { x: PANEL.x + 12, y: PANEL.y + (PANEL.h - s) / 2, s };
+  } else for (const k of ['left', 'top', 'width', 'height']) el.style[k] = '';
 }
 window.addEventListener('resize', resize);
+if (window.viewport && window.viewport.addEventListener) window.viewport.addEventListener('segmentschange', resize);
+window.__setFold = f => { foldInfo = f; resize(); };
 resize();
 
 // ============================================================ audio
@@ -1059,17 +1103,17 @@ function computeView() {
   if (gd < 300) { dx = dx / (gd || 1) * 300; dy = dy / (gd || 1) * 300; gd = 300; }
   V.ax = ax; V.ay = ay; V.fx = dx / gd; V.fy = dy / gd; V.rx = V.fy; V.ry = -V.fx;
   V.gd = gd; V.E = Math.atan2(D.alt, gd); V.sinE = Math.sin(V.E); V.cosE = Math.cos(V.E); V.cot = V.cosE / V.sinE;
-  V.fov = G.fov; V.s = W / G.fov; V.min = 1.3 / V.s;
+  V.fov = G.fov; V.s = hyp(W, H) / (G.fov * 1.147); V.min = 1.3 / V.s;
   const sh = G.shake;
   V.cx = W / 2 + (sh ? rr(-sh, sh) : 0); V.cy = H / 2 + (sh ? rr(-sh, sh) : 0);
-  V.cull = hyp(G.fov / 2, H / W * G.fov / 2 / V.sinE) + 50;
+  V.cull = hyp(W / 2 / V.s, H / 2 / (V.s * V.sinE)) + 50;
   V.pal = G.pal; V.L = G.M.light;
   V.sunx = 0.55; V.suny = 0.83;
   V.bearing = ((Math.atan2(V.fx, V.fy) * 180 / Math.PI) + 360) % 360;
 }
 function setWorldTf() {
   const s = V.s * DPR, a = V.rx * s, c = V.ry * s, b = -V.fx * s * V.sinE, d = -V.fy * s * V.sinE;
-  ctx.setTransform(a, b, c, d, V.cx * DPR - (a * V.ax + c * V.ay), V.cy * DPR - (b * V.ax + d * V.ay));
+  ctx.setTransform(a, b, c, d, (V.cx + VR.x) * DPR - (a * V.ax + c * V.ay), (V.cy + VR.y) * DPR - (b * V.ax + d * V.ay));
 }
 function w2s(x, y, h = 0) {
   const dx = x - V.ax, dy = y - V.ay;
@@ -1093,9 +1137,13 @@ function col(h, day, a = 1) {
 }
 const visible = (x, y, extra = 0) => Math.abs(x - V.ax) < V.cull + extra && Math.abs(y - V.ay) < V.cull + extra && hyp(x - V.ax, y - V.ay) < V.cull + extra;
 
+const baseTf = () => ctx.setTransform(DPR, 0, 0, DPR, VR.x * DPR, VR.y * DPR);
 function render() {
   computeView();
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  if (PANEL) { ctx.fillStyle = '#05080a'; ctx.fillRect(0, 0, SW, SH); }
+  ctx.save();
+  baseTf(); ctx.beginPath(); ctx.rect(0, 0, W, H); ctx.clip();
   const night = V.L < 0.5;
   ctx.fillStyle = V.pal === 2 ? `rgb(${120 * V.L | 0},${130 * V.L | 0},${90 * V.L | 0})` : col(G.Wd.groundHeat, [0, 0, 0]);
   ctx.fillRect(0, 0, W, H);
@@ -1119,11 +1167,21 @@ function render() {
   drawParts();
   drawMissiles();
   // post
-  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  baseTf();
   if (G.whiteout > 0 && V.pal !== 2) { ctx.fillStyle = V.pal === 1 ? `rgba(0,0,0,${G.whiteout * 0.7})` : `rgba(255,255,255,${G.whiteout * 0.7})`; ctx.fillRect(0, 0, W, H); }
   else if (G.whiteout > 0) { ctx.fillStyle = `rgba(255,230,190,${G.whiteout * 0.5})`; ctx.fillRect(0, 0, W, H); }
   postFx(night);
   if (!G.demo) drawHUD();
+  ctx.restore();
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  if (!G.demo) {
+    if (PANEL) { // control-panel edge along the fold / split line
+      ctx.strokeStyle = 'rgba(160,255,170,0.25)'; ctx.lineWidth = 1; ctx.beginPath();
+      if (LAYOUT === 'book') { ctx.moveTo(PANEL.x + 0.5, 0); ctx.lineTo(PANEL.x + 0.5, SH); } else { ctx.moveTo(0, PANEL.y + 0.5); ctx.lineTo(SW, PANEL.y + 0.5); }
+      ctx.stroke();
+    }
+    drawMinimap();
+  }
 }
 
 function drawRoads() {
@@ -1438,7 +1496,7 @@ function postFx(night) {
     ctx.save(); ctx.globalAlpha = a * 0.75;
     ctx.drawImage(grain[(Math.random() * 4) | 0], 0, 0, W, H);
     ctx.globalAlpha = a;
-    for (let i = 0; i < 6; i++) { const y = Math.random() * H, h = Math.random() * 20 + 2; ctx.drawImage(cv, 0, y * DPR, cv.width, h * DPR, (Math.random() - 0.5) * 60, y, W, h); }
+    for (let i = 0; i < 6; i++) { const y = Math.random() * H, h = Math.random() * 20 + 2; ctx.drawImage(cv, VR.x * DPR, (VR.y + y) * DPR, W * DPR, h * DPR, (Math.random() - 0.5) * 60, y, W, h); }
     ctx.restore();
   }
   if (G.over && !G.over.win && G.drone.hp <= 0) {
@@ -1457,7 +1515,8 @@ function txt(s, x, y, size = 13, color = HUD, align = 'left', base = 'alphabetic
 }
 function drawHUD() {
   const u = UI, cx = W / 2, cy = H / 2, D = G.drone;
-  const padL = isTouch ? 84 : 14, lh = 17 * u;
+  const overlay = isTouch && !PANEL; // touch buttons float over the view
+  const padL = overlay ? 84 : 14, lh = 17 * u;
   ctx.lineCap = 'butt';
   // crosshair
   ctx.strokeStyle = HUD; ctx.lineWidth = 1.5;
@@ -1503,7 +1562,7 @@ function drawHUD() {
     let [sx, sy] = w2s(x, y, 3);
     const m = 40 * u, off = sx < m || sy < m * 1.6 || sx > W - m || sy > H - m;
     const dist = hyp(x - G.aim.x, y - G.aim.y);
-    sx = clamp(sx, isTouch ? 100 : m, W - (isTouch ? 190 : m)); sy = clamp(sy, m * 1.6, H - m);
+    sx = clamp(sx, overlay ? 100 : m, W - (overlay ? 190 : m)); sy = clamp(sy, m * 1.6, H - m);
     ctx.strokeStyle = AMBER; ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.moveTo(sx, sy - 9); ctx.lineTo(sx + 9, sy); ctx.lineTo(sx, sy + 9); ctx.lineTo(sx - 9, sy); ctx.closePath(); ctx.stroke();
     txt(p.label + (off || dist > G.fov * 0.6 ? '  ' + (dist / 1000).toFixed(1) + 'km' : ''), sx, sy - 14 * u, 11, AMBER, 'center');
@@ -1528,6 +1587,7 @@ function drawHUD() {
     txt((d ? '■ ' : '□ ') + o.text + (o.count && !d ? ' ' + o.count() : ''), padL, y, 12, d ? '#7fe08f' : o.optional ? HUD_DIM : HUD); y += lh * 0.95;
   }
   txt('CIV CAS ' + G.stats.civ + '/' + G.M.civLimit + '   HOSTILE ' + G.stats.host, padL, y, 12, G.stats.civ ? AMBER : HUD_DIM); y += lh;
+  const leftEnd = y;
   // left telemetry
   y = cy - lh * 2;
   const tel = [
@@ -1536,8 +1596,9 @@ function drawHUD() {
   ];
   if (!(isTouch && W < 760)) for (const [k, v] of tel) { txt(k.padEnd(6) + v, padL, y, 12, k === 'HULL' && D.hp < 100 ? RED : HUD_DIM); y += lh * 0.95; }
   // right: sensor & weapons
-  const rx = isTouch ? minimapRect().x - 12 : W - 14;
-  y = 22 * u;
+  const mmInView = isTouch && !MMP;
+  const rx = mmInView ? minimapRect().x - VR.x - 12 : W - 14;
+  y = W < 640 && !mmInView ? leftEnd + 4 : 22 * u; // narrow view: stack below the objectives
   txt(PAL_NAMES[G.pal] + '  FOV ' + Math.round(G.fov) + 'M', rx, y, 13, HUD, 'right'); y += lh;
   const slant = hyp(V.gd, D.alt);
   txt('SLANT ' + (slant / 1000).toFixed(1) + 'KM  EL ' + Math.round(V.E * 180 / Math.PI) + '°', rx, y, 12, HUD_DIM, 'right'); y += lh;
@@ -1549,7 +1610,7 @@ function drawHUD() {
   }
   txt('FLR ' + G.flares + (G.flareT > 0 ? '  ✶ DEPLOYED' : ''), rx, y, 12, G.flareT > 0 ? AMBER : HUD_DIM, 'right'); y += lh;
   // bottom centre: target data
-  const by = H - (isTouch ? 18 : 30) * u;
+  const by = H - (overlay ? 18 : 30) * u;
   const grid = '37U DQ ' + String(Math.round(G.aim.x)).padStart(4, '0') + ' ' + String(Math.round(G.aim.y)).padStart(4, '0');
   txt('TGT ' + grid, cx, by, 13, HUD, 'center');
   if (G.missiles.length) {
@@ -1580,9 +1641,10 @@ function drawHUD() {
     txt('IMPACT ' + m.tti.toFixed(1) + 's — FLARES' + (isTouch ? ' [FLR]' : ' [C]'), cx, ty + 74 * u, 14, m.tti < 3.2 ? RED : AMBER, 'center');
   }
   // radio log
-  let ly = H - (isTouch ? 16 : 54) * u;
-  const recent = G.msgs.filter(m => G.t - m.t < 16).slice(-5).reverse();
-  const maxW = isTouch ? Math.max(160, cx - padL - 130 * u) : Math.min(W * 0.5, 620);
+  const squareish = overlay && H > W * 0.8; // unfolded foldable: room above the target readout
+  let ly = H - (overlay && !squareish ? 16 : squareish ? 42 : 54) * u;
+  const recent = G.msgs.filter(m => G.t - m.t < 16).slice(-(W < 640 ? 3 : 5)).reverse();
+  const maxW = squareish ? W - padL - 200 : overlay ? Math.max(160, cx - padL - 130 * u) : W < 700 ? W - 28 : Math.min(W * 0.5, 620);
   for (const m of recent) {
     const lines = wrap(m.text, maxW, 12);
     const a = clamp((16 - (G.t - m.t)) / 3, 0, 1);
@@ -1591,7 +1653,6 @@ function drawHUD() {
     ctx.globalAlpha = 1;
     ly -= 4;
   }
-  drawMinimap();
   // help
   if (G.help) {
     const lines = isTouch ? [
@@ -1605,7 +1666,7 @@ function drawHUD() {
       'T changes the thermal mode · O changes orbit · click the map to move the camera · H hides help',
     ];
     let hy = cy - 120 * u;
-    for (const s of lines) { txt(s, cx, hy, 12, 'rgba(230,255,226,0.85)', 'center'); hy += lh; }
+    for (const s of lines) for (const ln of wrap(s, W - 40, 12)) { txt(ln, cx, hy, 12, 'rgba(230,255,226,0.85)', 'center'); hy += lh; }
     if (G.helpT > 25) G.help = false;
   }
 }
@@ -1617,11 +1678,12 @@ function wrap(s, maxW, size) {
   return out;
 }
 const MM = { x: 0, y: 0, s: 0 };
-function minimapRect() {
+function minimapRect() { // absolute screen coordinates
+  if (MMP) { MM.x = MMP.x; MM.y = MMP.y; MM.s = MMP.s; return MM; }
   const s = isTouch ? Math.round(clamp(H * 0.3, 96, 150)) : Math.round(190 * UI);
   MM.s = s;
-  if (isTouch) { MM.x = W - s - 12; MM.y = 14; }
-  else { MM.x = W - s - 14; MM.y = H - s - 14; }
+  if (isTouch) { MM.x = VR.x + W - s - 12; MM.y = VR.y + 14; }
+  else { MM.x = VR.x + W - s - 14; MM.y = VR.y + H - s - 14; }
   return MM;
 }
 function drawMinimap() {
@@ -1716,6 +1778,9 @@ const ACT = {
 cv.addEventListener('pointerdown', e => {
   Snd.init();
   if (state !== 'play') return;
+  const mm = inMinimap(e.clientX, e.clientY);
+  const vx = e.clientX - VR.x, vy = e.clientY - VR.y;
+  if (!mm && (vx < 0 || vy < 0 || vx > W || vy > H)) return;
   cv.setPointerCapture(e.pointerId);
   ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (ptrs.size === 2) {
@@ -1723,7 +1788,7 @@ cv.addEventListener('pointerdown', e => {
     pinch = { d: hyp(a.x - b.x, a.y - b.y), fov: G.fov };
     downInfo = null;
   } else if (ptrs.size === 1) {
-    downInfo = { x: e.clientX, y: e.clientY, t: performance.now(), mm: inMinimap(e.clientX, e.clientY) };
+    downInfo = { x: e.clientX, y: e.clientY, t: performance.now(), mm };
     dragMoved = 0;
     if (downInfo.mm) minimapJump(e.clientX, e.clientY);
   }
@@ -1749,7 +1814,7 @@ const endPtr = e => {
   if (!ptrs.has(e.pointerId)) return;
   ptrs.delete(e.pointerId);
   if (ptrs.size < 2) pinch = null;
-  if (state === 'play' && downInfo && !downInfo.mm && dragMoved <= 6 && performance.now() - downInfo.t < 450) lockAt(e.clientX, e.clientY);
+  if (state === 'play' && downInfo && !downInfo.mm && dragMoved <= 6 && performance.now() - downInfo.t < 450) lockAt(e.clientX - VR.x, e.clientY - VR.y);
   if (ptrs.size === 0) downInfo = null;
 };
 cv.addEventListener('pointerup', endPtr);
@@ -1830,7 +1895,7 @@ function startMission(i) {
   state = 'play';
   for (const id of ['menu', 'brief', 'pause', 'end']) show(id, false);
   show('touch', isTouch);
-  if (isTouch) {
+  if (isTouch && !isNative) {
     const el = document.documentElement;
     try {
       const p = el.requestFullscreen ? el.requestFullscreen({ navigationUI: 'hide' }) : null;
@@ -1890,9 +1955,25 @@ $('eNext').onclick = () => openBrief(missionIndex + 1);
 document.addEventListener('visibilitychange', () => { if (document.hidden && state === 'play') pauseGame(); });
 
 // ============================================================ main loop
-let last = performance.now();
+let last = performance.now(), workMs = 8, perfT = 0;
+function adaptResolution(dt, ms) {
+  // keep big foldable screens smooth: drop render resolution when frames get heavy, restore when there is headroom
+  workMs = workMs * 0.95 + ms * 0.05; perfT += dt;
+  if (perfT < 3) return;
+  perfT = 0;
+  if (workMs > 15 && renderScale > 0.55) { renderScale = Math.round((renderScale - 0.15) * 100) / 100; resize(); }
+  else if (workMs < 6 && renderScale < 1) { renderScale = Math.min(1, Math.round((renderScale + 0.15) * 100) / 100); resize(); }
+}
+window.__nativeBack = () => {
+  if (state === 'play') { pauseGame(); return true; }
+  if (state === 'pause') { resumeGame(); return true; }
+  if (state === 'end') { toMenu(); return true; }
+  if (!$('brief').classList.contains('hidden')) { show('brief', false); show('menu', true); return true; }
+  return false;
+};
 function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  const t0 = performance.now();
   if (G) {
     if (state === 'play') { keySlew(dt); update(dt); }
     else if (state === 'menu') {
@@ -1901,10 +1982,11 @@ function frame(now) {
       update(dt);
     }
     render();
+    if (state === 'play') adaptResolution(dt, performance.now() - t0);
   }
   requestAnimationFrame(frame);
 }
 toMenu();
 requestAnimationFrame(frame);
-window.__steppehawk = { get G() { return G; }, get state() { return state; }, startMission, fire, lockAt, MISSIONS };
+window.__steppehawk = { get G() { return G; }, get state() { return state; }, get layout() { return { LAYOUT, VR: { ...VR, w: W, h: H }, PANEL, MMP, renderScale }; }, startMission, fire, lockAt, MISSIONS };
 })();

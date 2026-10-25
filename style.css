@@ -77,5 +77,10 @@ canvas#game { position: fixed; inset: 0; width: 100vw; height: 100vh; display: b
 .tb.warn { border-color: rgba(255, 210, 90, 0.6); color: #ffe7a6; }
 .tb.on, .tb:active { background: rgba(120, 255, 140, 0.35); }
 
-#rotate { position: fixed; inset: 0; z-index: 50; background: #05080a; display: flex; align-items: center; justify-content: center; text-align: center; font-size: 20px; color: #9fd8a8; }
-#rotate div { font-size: 18px; line-height: 2; }
+
+/* split layout: half-folded foldables (tabletop / book) and tall portrait screens */
+#touch.deck { inset: auto; display: flex; align-items: center; justify-content: flex-end; gap: 14px;
+  padding: 12px max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) 12px; }
+#touch.deck .tgroup { position: static; transform: none; }
+#touch.deck.stack { flex-direction: column; justify-content: flex-end; }
+#touch.deck.stack .tgroup.left { flex-direction: row; }

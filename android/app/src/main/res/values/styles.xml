@@ -1,0 +1,10 @@
+<resources>
+    <color name="game_bg">#05080A</color>
+    <color name="icon_bg">#0A140E</color>
+    <style name="AppTheme" parent="android:Theme.Material.NoActionBar.Fullscreen">
+        <item name="android:windowBackground">@color/game_bg</item>
+        <item name="android:statusBarColor">@color/game_bg</item>
+        <item name="android:navigationBarColor">@color/game_bg</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+    </style>
+</resources>

@@ -97,11 +97,9 @@
   </div>
 </div>
 
-<div id="rotate" class="hidden"><div>⟳<br>Rotate your device to landscape</div></div>
-
 <script src="js/game.js"></script>
 <script>
-if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+if ('serviceWorker' in navigator && location.protocol.startsWith('http') && !window.SteppeHawkNative) {
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
 }
 </script>
