@@ -1055,8 +1055,20 @@ function spawnWave(G) {
     tel.sam.cd = rr(8, 16);
     G.vehs.push(tel);
   }
+  // foot soldiers: infantry push toward the village from the map edges, in squads, scaling each wave
+  const aliveFoot = G.peds.filter(p => p.alive).length;
+  const nFoot = Math.min(10 + G.wave * 6, Math.max(0, 180 - aliveFoot));
+  const squads = Math.max(1, Math.round(nFoot / 6));
+  for (let sdq = 0; sdq < squads; sdq++) {
+    const start = entries[(G.wave + sdq) % 4];
+    const ox = start.x + rr(-60, 60), oy = start.y + rr(-60, 60);
+    for (let k = 0; k < Math.ceil(nFoot / squads); k++) {
+      const p = mkPed(ox + rr(-14, 14), oy + rr(-14, 14), { role: 'inf', hostile: true, day: pick(MIL), hx: 2000, hy: 2000, rad: rr(120, 320), walk: rr(1.0, 1.8), heat: rr(0.88, 0.95) });
+      G.peds.push(p);
+    }
+  }
   G.flares = G.M.flares || 20; // refill flares each wave
-  msg('WAVE ' + G.wave + ' inbound — ' + nArmour + ' armour, ' + nSam + ' SAM' + (nSam > 1 ? 's' : '') + '. Weapons free.', '#ffd38a', 'DNIPRO');
+  msg('WAVE ' + G.wave + ' inbound — ' + nArmour + ' armour, ' + nFoot + ' infantry, ' + nSam + ' SAM' + (nSam > 1 ? 's' : '') + '. Weapons free.', '#ffd38a', 'DNIPRO');
   Snd.warn();
 }
 function updateSurvival(dt) {
@@ -1064,6 +1076,9 @@ function updateSurvival(dt) {
   const aliveHost = G.vehs.filter(v => v.alive && v.hostile).length;
   // next wave when the area is nearly cleared, or on a backstop timer; capped for performance
   if (aliveHost < 44 && (aliveHost <= 2 || (G.t - G.waveStart) > 55)) spawnWave(G);
+  // prune the oldest wrecks and bodies so long runs stay smooth
+  if (G.peds.length > 240) { let rm = G.peds.length - 240; G.peds = G.peds.filter(p => (rm > 0 && !p.alive) ? (rm--, false) : true); }
+  if (G.vehs.length > 90) { let rm = G.vehs.length - 90; G.vehs = G.vehs.filter(v => (rm > 0 && !v.alive) ? (rm--, false) : true); }
 }
 
 // ============================================================ simulation
@@ -1645,10 +1660,12 @@ function drawPed(p) {
     ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.lineWidth = 0.45;
     ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x - V.sunx * 1.4, p.y - V.suny * 1.4); ctx.stroke();
   }
-  ctx.strokeStyle = col(p.heat, p.day); ctx.lineWidth = Math.max(0.55, m);
+  // foot soldiers read as warm bodies; make the hostile ones a touch larger so a swarm is visible
+  const hot = p.hostile ? 1 : 0;
+  ctx.strokeStyle = col(p.heat, p.day); ctx.lineWidth = Math.max(p.hostile ? 0.7 : 0.55, m * (p.hostile ? 1.1 : 1));
   ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(hx, hy); ctx.stroke();
-  ctx.fillStyle = col(p.heat + 0.04, [214, 180, 150]);
-  ctx.beginPath(); ctx.arc(hx, hy, Math.max(0.24, m * 0.7), 0, TAU); ctx.fill();
+  ctx.fillStyle = col(p.heat + 0.06 * (1 + hot), [214, 180, 150]);
+  ctx.beginPath(); ctx.arc(hx, hy, Math.max(p.hostile ? 0.34 : 0.24, m * (p.hostile ? 1.1 : 0.7)), 0, TAU); ctx.fill();
   if (p.hostile && V.fov <= 300) {
     const kk = 1.1 * V.cot, bx = p.x + V.fx * kk, by = p.y + V.fy * kk;
     ctx.strokeStyle = col(0.5, [30, 30, 30]); ctx.lineWidth = 0.14;
@@ -2143,8 +2160,14 @@ function drawMinimap() {
     ctx.strokeStyle = AMBER; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.arc(mx(px), my(py), Math.max(4, (p.r || 0) * k), 0, TAU); ctx.stroke();
   }
-  // identified hostiles
-  for (const e of G.vehs.concat(G.peds)) if (e.identified && e.alive && e.hostile) { ctx.fillStyle = RED; ctx.fillRect(mx(e.x) - 1.5, my(e.y) - 1.5, 3, 3); }
+  // identified hostiles (in survival the whole wave shows — it's weapons-free, no PID needed)
+  if (G.survival) {
+    for (const v of G.vehs) if (v.alive && v.hostile) { ctx.fillStyle = RED; ctx.fillRect(mx(v.x) - 1.5, my(v.y) - 1.5, 3, 3); }
+    ctx.fillStyle = 'rgba(255,120,90,0.85)';
+    for (const p of G.peds) if (p.alive && p.hostile) ctx.fillRect(mx(p.x) - 0.9, my(p.y) - 0.9, 1.8, 1.8);
+  } else {
+    for (const e of G.vehs.concat(G.peds)) if (e.identified && e.alive && e.hostile) { ctx.fillStyle = RED; ctx.fillRect(mx(e.x) - 1.5, my(e.y) - 1.5, 3, 3); }
+  }
   // known SAM ranges
   for (const v of G.vehs) if (v.sam && v.alive && v.identified) {
     const r = (v.sam.radar && v.sam.radar.alive) ? v.sam.range : v.sam.rangeBlind;
