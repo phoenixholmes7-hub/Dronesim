@@ -63,7 +63,7 @@ Pick **FPV Stunts** or **FPV Strike** from the menu tabs. The 3D view runs throu
 | **FPV Bomber — Trench Line / Night Drops** | FPV Strike | A reusable bomber quad: fly over the target and release munitions that fall with your speed. |
 
 - **Flight modes.** *Self-levelling* holds the horizon for you; *acro* gives full rate control for flips, rolls and loops but will not catch you. Switch with **MODE** / `M`.
-- **Controls.** Touch: left stick throttle + yaw, right stick pitch + roll, plus on-screen buttons. Keyboard: `W`/`S` throttle, `A`/`D` yaw, arrows (or `I`/`K`/`J`/`L`) pitch + roll, `Shift` boost, `Space` strike / drop, `R` new drone, `M` flight mode. A twin-stick **gamepad** (Mode 2) is supported.
+- **Controls.** Touch: left stick throttle + yaw, right stick pitch + roll, plus on-screen buttons. **Keyboard & mouse (web/desktop):** click the view to capture the mouse — the **mouse** then steers pitch + roll, while `W`/`S` throttle, `A`/`D` yaw and the **scroll wheel** climbs/descends; **left-click** strikes/drops, **right-click** (or `Shift`) boosts, `M` flight mode, `T` lens, `R` new drone, `Esc` frees the mouse (press again to exit). Keyboard-only works too: arrows (or `I`/`K`/`J`/`L`) pitch + roll, `Space` strike / drop. A twin-stick **gamepad** (Mode 2) is supported.
 - **Scoring.** Tricks and gaps chain into combos for a score multiplier; strike and bomb sorties score per vehicle destroyed. Hitting civilian traffic ends a strike sortie. Best scores and race times are saved on the device.
 
 ## Android app (APK)

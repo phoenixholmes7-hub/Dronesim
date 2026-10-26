@@ -1227,7 +1227,14 @@ function readInput(G, dt) {
   if (keys['a']) kyaw -= 1; if (keys['d']) kyaw += 1;
   if (keys['arrowup'] || keys['i']) kp += 1; if (keys['arrowdown'] || keys['k']) kp -= 1;
   if (keys['arrowleft'] || keys['j']) kr -= 1; if (keys['arrowright'] || keys['l']) kr += 1;
-  inp.boost = !!keys['shift'] || G.padBoost;
+  inp.boost = !!keys['shift'] || G.padBoost || G.mouseBoost;
+  // mouse flight (pointer-locked): movement deltas steer pitch/roll and spring back to centre;
+  // the wheel nudges climb. Snap tiny residuals to 0 so keyboard can take over cleanly.
+  const m = G.mouse;
+  m.x *= Math.exp(-7 * dt); m.y *= Math.exp(-7 * dt); m.climb *= Math.exp(-2.5 * dt);
+  if (Math.abs(m.x) < 0.003) m.x = 0;
+  if (Math.abs(m.y) < 0.003) m.y = 0;
+  if (Math.abs(m.climb) < 0.01) m.climb = 0;
   // gamepad
   let gLx = 0, gLy = 0, gRx = 0, gRy = 0;
   const pads = navigator.getGamepads ? navigator.getGamepads() : [];
@@ -1243,9 +1250,9 @@ function readInput(G, dt) {
   }
   // combine: touch sticks + keyboard + gamepad (whichever is active)
   const lx = G.stickL.active ? G.stickL.x : (gLx || kyaw);
-  const ly = G.stickL.active ? G.stickL.y : (gLy || ky);
-  const rx = G.stickR.active ? G.stickR.x : (gRx || kr);
-  const ry = G.stickR.active ? G.stickR.y : (gRy || kp);
+  const ly = G.stickL.active ? G.stickL.y : (gLy || ky || m.climb);
+  const rx = G.stickR.active ? G.stickR.x : (gRx || m.x || kr);
+  const ry = G.stickR.active ? G.stickR.y : (gRy || -m.y || kp);
   // response curve: fine control near centre, full authority at the edge (kills twitchiness)
   const expo = v => { v = clamp(v, -1, 1); return v * (0.45 + 0.55 * v * v); };
   const tYaw = expo(lx), tRoll = expo(rx), tPitch = expo(-ry), tClimb = clamp(ly, -1, 1); // stick up = nose down
@@ -1306,6 +1313,36 @@ function bindTouchControls() {
       else if (act === 'exit') exit();
     });
   }
+}
+
+// ============================================================ mouse flight (keyboard + mouse, desktop/web)
+// Pointer-locked mouse steers pitch/roll; left-click strikes/drops, right-click boosts, wheel climbs.
+// Bound once; handlers read the live session S so they survive sortie changes.
+function bindMouseFlight() {
+  const wrap = document.getElementById('fpvWrap');
+  const locked = () => document.pointerLockElement === wrap;
+  wrap.addEventListener('mousedown', e => {
+    if (!S || API.isTouch) return;
+    if (!locked()) { if (wrap.requestPointerLock) wrap.requestPointerLock(); e.preventDefault(); return; }
+    if (e.button === 0) actionPrimary(S);        // left-click: strike / drop
+    else if (e.button === 2) S.mouseBoost = true; // right-click: hold to boost
+    e.preventDefault();
+  });
+  window.addEventListener('mouseup', e => { if (S && e.button === 2) S.mouseBoost = false; });
+  document.addEventListener('mousemove', e => {
+    if (!S || !locked()) return;
+    const sens = 0.006;
+    S.mouse.x = clamp(S.mouse.x + e.movementX * sens, -1, 1);
+    S.mouse.y = clamp(S.mouse.y + e.movementY * sens, -1, 1);
+  });
+  wrap.addEventListener('wheel', e => {
+    if (!S || !locked()) return;
+    S.mouse.climb = clamp(S.mouse.climb - Math.sign(e.deltaY) * 0.5, -1, 1);
+    e.preventDefault();
+  }, { passive: false });
+  wrap.addEventListener('contextmenu', e => { if (S && locked()) e.preventDefault(); });
+  // releasing the pointer lock (Esc or blur) must not leave boost latched on
+  document.addEventListener('pointerlockchange', () => { if (S && !locked()) S.mouseBoost = false; });
 }
 
 // ============================================================ lifecycle
@@ -1403,6 +1440,7 @@ async function start(cfg) {
   G.yaw = new THREE.Euler().setFromQuaternion(G.quad.q, 'YXZ').y;
   G.input = makeInput();
   G.stickL = { x: 0, y: 0, active: false }; G.stickR = { x: 0, y: 0, active: false };
+  G.mouse = { x: 0, y: 0, climb: 0 }; G.mouseBoost = false;
   G.motors = makeMotors();
   layout(G);
   // show
@@ -1411,7 +1449,7 @@ async function start(cfg) {
   document.getElementById('fpvTouch').classList.toggle('on', API.isTouch);
   initHud();
   S = G;                              // make the session live before binding so handlers see it
-  if (!fpvBound) { fpvBound = true; bindTouchControls(); }
+  if (!fpvBound) { fpvBound = true; bindTouchControls(); bindMouseFlight(); }
   // relabel GO button per mode
   const go = document.querySelector('#fpvTouch .fpvbtn.go');
   go.textContent = cfg.mode === 'bomb' ? 'DROP' : cfg.mode === 'strike' ? 'STRIKE' : 'MODE2';
@@ -1425,6 +1463,7 @@ async function start(cfg) {
   G.raf = requestAnimationFrame(loop);
   // intro flash
   flash(G, cfg.name, '#9effa8');
+  if (!API.isTouch) flash(G, 'CLICK TO CAPTURE MOUSE · ESC TO RELEASE', '#8fd0ff');
 }
 
 function loop(now) {
@@ -1585,7 +1624,8 @@ function openBrief(s) {
   bt.textContent = s.name;
   bb.innerHTML = `<div class="kv"><span>MODE</span><span>${modeLabel(s.mode)}</span><span>CONDITIONS</span><span>${s.tod}</span>` +
     (s.drones ? `<span>DRONES</span><span>${s.drones}</span>` : '') + (s.bombs ? `<span>BOMBS</span><span>${s.bombs}</span>` : '') +
-    (s.target ? `<span>TARGET SCORE</span><span>${s.target}</span>` : '') + `</div><h4>BRIEFING</h4><p>${s.brief}</p>`;
+    (s.target ? `<span>TARGET SCORE</span><span>${s.target}</span>` : '') + `</div><h4>BRIEFING</h4><p>${s.brief}</p>` +
+    (API.isTouch ? '' : `<h4>KEYBOARD &amp; MOUSE</h4><p>Click the view to capture the mouse. <b>Mouse</b> steers pitch &amp; roll · <b>W/S</b> throttle · <b>A/D</b> yaw · <b>wheel</b> climb/descend · <b>left-click</b> ${s.mode === 'bomb' ? 'drop bomb' : s.mode === 'strike' ? 'arm strike' : '—'} · <b>right-click</b> or <b>Shift</b> boost · <b>M</b> flight mode · <b>T</b> lens · <b>R</b> new drone · <b>Esc</b> free mouse / exit.</p>`);
   menu.classList.add('hidden'); brief.classList.remove('hidden');
   document.getElementById('fpvBStart').onclick = () => { API.Snd.init(); brief.classList.add('hidden'); start(s); };
   document.getElementById('fpvBBack').onclick = () => { brief.classList.add('hidden'); menu.classList.remove('hidden'); };
@@ -1611,7 +1651,7 @@ window.addEventListener('keydown', e => {
   else if (k === 'm') { if (S) toggleMode(S); }
   else if (k === 't' || k === 'v') { if (S) toggleLens(S); }
   else if (k === 'r') { if (S && S.quad) respawn(S); }
-  else if (k === 'escape') { exit(); }
+  else if (k === 'escape') { if (document.pointerLockElement) return; exit(); } // first Esc frees the mouse, next exits
   if (k.startsWith('arrow')) e.preventDefault();
 });
 window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
