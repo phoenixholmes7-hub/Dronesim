@@ -43,25 +43,76 @@
 <div id="menu" class="overlay">
   <div class="panel wide">
     <div class="title">STEPPE HAWK</div>
-    <div class="subtitle">UAV STRIKE SIMULATOR // UKRAINE</div>
-    <div id="missionList"></div>
-    <details class="controls">
-      <summary>CONTROLS</summary>
-      <div class="cols">
-        <div>
-          <b>Touch (Android)</b>
-          <p>Drag: slew the camera<br>Pinch / + −: zoom<br>Tap: lock a track<br>TRK: lock at the crosshair<br>FIRE / WPN / FLR: fire, switch weapon, flares<br>Tap the map: move the camera there</p>
+    <div class="subtitle">UNMANNED AERIAL OPERATIONS // UKRAINE</div>
+    <div id="tabs" class="tabs">
+      <button class="tab on" data-tab="uav">UAV STRIKE</button>
+      <button class="tab" data-tab="stunt">FPV STUNTS</button>
+      <button class="tab" data-tab="strike">FPV STRIKE</button>
+    </div>
+
+    <div class="tabpane" data-pane="uav">
+      <p class="tabhint">Fly a reconnaissance-strike UAV. Find and identify armour, air defences and artillery through a gimballed thermal camera, and guide weapons onto them by laser.</p>
+      <div id="missionList"></div>
+      <details class="controls">
+        <summary>CONTROLS</summary>
+        <div class="cols">
+          <div>
+            <b>Touch (Android)</b>
+            <p>Drag: slew the camera<br>Pinch / + −: zoom<br>Tap: lock a track<br>TRK: lock at the crosshair<br>FIRE / WPN / FLR: fire, switch weapon, flares<br>Tap the map: move the camera there</p>
+          </div>
+          <div>
+            <b>Keyboard / Mouse</b>
+            <p>Drag or WASD/arrows: slew<br>Wheel or Q/E: zoom<br>Click / Space: lock track<br>F or Enter: fire &nbsp; 1/2: weapon<br>C: flares &nbsp; T: thermal mode &nbsp; O: orbit<br>H: help &nbsp; Esc/P: pause</p>
+          </div>
         </div>
-        <div>
-          <b>Keyboard / Mouse</b>
-          <p>Drag or WASD/arrows: slew<br>Wheel or Q/E: zoom<br>Click / Space: lock track<br>F or Enter: fire &nbsp; 1/2: weapon<br>C: flares &nbsp; T: thermal mode &nbsp; O: orbit<br>H: help &nbsp; Esc/P: pause</p>
+        <p class="note">The laser guides your munitions to the crosshair until impact, so keep it on the target. Lock and zoom in on a target to get positive ID (PID). The mission fails if you go over the civilian-casualty limit.</p>
+      </details>
+    </div>
+
+    <div class="tabpane hidden" data-pane="stunt">
+      <p class="tabhint">Strap on the goggles and fly a 3D first-person FPV quad over the same village, fields and river. Throw flips, rolls, power loops and dives, thread gaps under the bridge and the power lines, and race the gates.</p>
+      <div id="stuntList"></div>
+      <details class="controls">
+        <summary>CONTROLS</summary>
+        <div class="cols">
+          <div>
+            <b>Touch</b>
+            <p>Left stick: throttle (up/down) &amp; yaw (left/right)<br>Right stick: pitch &amp; roll<br>MODE: self-level / acro<br>Tap the view to recentre the sticks</p>
+          </div>
+          <div>
+            <b>Keyboard / Gamepad</b>
+            <p>W/S: throttle &nbsp; A/D: yaw<br>Arrows or I/K/J/L: pitch &amp; roll<br>Shift: boost &nbsp; M: flight mode &nbsp; R: recover<br>Gamepad: twin sticks (Mode 2), supported</p>
+          </div>
         </div>
-      </div>
-      <p class="note">The laser guides your munitions to the crosshair until impact, so keep it on the target. Lock and zoom in on a target to get positive ID (PID). The mission fails if you go over the civilian-casualty limit.</p>
-    </details>
+        <p class="note">Self-levelling holds the horizon for you; acro gives you full rate control for flips and loops but will not catch you. Tricks score more in a combo — keep them chained.</p>
+      </details>
+    </div>
+
+    <div class="tabpane hidden" data-pane="strike">
+      <p class="tabhint">First-person-view strike sorties. Dive a one-way FPV drone onto enemy armour and air defences through analog goggles, dodging flak and wires, for cool, explosive effect. A work of fiction.</p>
+      <div id="strikeList"></div>
+      <details class="controls">
+        <summary>CONTROLS</summary>
+        <div class="cols">
+          <div>
+            <b>Touch</b>
+            <p>Left stick: throttle &amp; yaw<br>Right stick: pitch &amp; roll<br>ARM / STRIKE: diving attack<br>BOOST: sprint</p>
+          </div>
+          <div>
+            <b>Keyboard / Gamepad</b>
+            <p>W/S/A/D + arrows: fly<br>Space: arm / commit the dive<br>Shift: boost &nbsp; R: new drone<br>Gamepad twin sticks supported</p>
+          </div>
+        </div>
+        <p class="note">Fly the drone into the target. Identify armour before you commit — hitting civilian traffic ends the sortie. Each lost drone is expended; you carry a limited number.</p>
+      </details>
+    </div>
+
     <div class="foot">A work of fiction. Units, places and events are invented.</div>
   </div>
 </div>
+
+<!-- lightweight loading splash while the 3D renderer and its library spin up -->
+<div id="fpvLoad" class="overlay hidden"><div class="panel narrow"><div class="ptitle">LINKING FPV FEED…</div><div id="fpvLoadMsg" class="note">Spooling motors</div></div></div>
 
 <div id="brief" class="overlay hidden">
   <div class="panel">
@@ -98,6 +149,7 @@
 </div>
 
 <script src="js/game.js"></script>
+<script src="js/fpv.js"></script>
 <script>
 if ('serviceWorker' in navigator && location.protocol.startsWith('http') && !window.SteppeHawkNative) {
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));

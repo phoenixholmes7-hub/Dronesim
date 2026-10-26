@@ -183,7 +183,7 @@ const Snd = {
 function genWorld(M) {
   const Wd = {
     nodes: new Map(), edges: [], blds: [], trees: [], farms: [], compounds: [], axes: [], parks: [],
-    market: null, winter: !!M.winter, riverX: null,
+    market: null, winter: !!M.winter, riverX: null, powerlines: [], pylons: [], wires: [],
   };
   const key = (i, j) => i + ',' + j;
   const edgeSet = new Set();
@@ -324,8 +324,45 @@ function genWorld(M) {
     for (let n = 0; n < 4; n++) addTree(Wd, x + ox * 0.9 + rr(-16, 16), y + oy * 0.9 + rr(-16, 16), rr(3, 4.5), rr(6, 10), true);
     Wd.farms.push({ x, y });
   }
+  makePowerlines(Wd);
   buildGround(Wd, M);
   return Wd;
+}
+
+// Transmission and distribution lines: pylons/poles with sagging wires. The FPV modes build real
+// geometry from these (and use the spans as "fly under the wires" gaps); the UAV view draws them flat.
+function makePowerlines(Wd) {
+  const near = (x, y, m) => Math.abs(x - Wd.riverX(y)) < m;
+  const run = (kind, h, pts, arms) => {
+    const poles = [];
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i], q = pts[i + 1] || pts[i - 1] || p, dir = Math.atan2(q.y - p.y, q.x - p.x) + Math.PI / 2;
+      poles.push({ x: p.x, y: p.y, h, dir, arms });
+      Wd.pylons.push({ x: p.x, y: p.y, h, dir, kind });
+    }
+    for (let i = 0; i < poles.length - 1; i++) {
+      const a = poles[i], b = poles[i + 1], mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      const span = hyp(b.x - a.x, b.y - a.y);
+      // one sagging mid-point per level for a cheap catenary
+      for (let L = 0; L < arms; L++) {
+        const yh = h - L * (kind === 'tx' ? 4.2 : 1.6), sag = Math.min(span * 0.07, kind === 'tx' ? 6 : 2);
+        Wd.wires.push({ ax: a.x, ay: a.y, bx: b.x, by: b.y, mx, my, h: yh, sag });
+      }
+    }
+    Wd.powerlines.push({ kind, h, poles, arms });
+  };
+  // a transmission line sweeping across the southern fields, crossing the river
+  const tx = [];
+  for (let x = 220; x <= 3820; x += 300) { const y = 1180 + 70 * Math.sin(x / 900); if (!near(x, y, 24)) tx.push({ x, y }); }
+  run('tx', 34, tx, 2);
+  // a second line up the eastern side
+  const tx2 = [];
+  for (let y = 300; y <= 3760; y += 320) tx2.push({ x: 3480 + 50 * Math.sin(y / 700), y });
+  run('tx', 30, tx2, 2);
+  // a low distribution line along the open field west of the village (tight "under the wires" gap)
+  const dist = [];
+  for (let x = 360; x <= 1380; x += 90) dist.push({ x, y: 1640 });
+  run('dist', 9, dist, 1);
 }
 
 function addBld(Wd, o) {
@@ -818,7 +855,7 @@ function update(dt) {
     if (fail) { G.over = { win: false, reason: fail }; G.endT = G.drone.hp <= 0 ? 2.5 : 3.5; msg('MISSION FAILED: ' + fail, '#ff6a5a'); }
     else if (req.every(o => o.done())) {
       G.over = { win: true, reason: 'All primary objectives complete' }; G.endT = 4;
-      msg('Good effect on target. Mission complete. Steppe Hawk, RTB. Glory to Ukraine.', '#b6ff9e', 'DNIPRO');
+      msg('Good effect on target. Victory. Mission complete — Steppe Hawk, RTB.', '#b6ff9e', 'DNIPRO');
     }
   } else {
     G.endT -= dt;
@@ -1163,6 +1200,7 @@ function render() {
   tall.sort((a, b) => b.dep - a.dep);
   if (V.pal === 2 && V.L > 0.5) drawShadows(tall);
   for (const o of tall) o.kind === 'tree' ? drawTree(o, wide) : drawBld(o);
+  drawPower();
   drawFires();
   drawParts();
   drawMissiles();
@@ -1417,6 +1455,35 @@ function drawVeh(v) {
     ctx.beginPath(); ctx.moveTo(L / 2, -Wd / 2); ctx.lineTo(L / 2 + 22, -5); ctx.lineTo(L / 2 + 22, 5); ctx.lineTo(L / 2, Wd / 2); ctx.fill();
   }
   ctx.restore();
+}
+function drawPower() {
+  const Wd = G.Wd, night = V.L < 0.5, h = night ? 0.3 : 0.26;
+  // wires: a two-segment catenary through the sagged mid-point
+  ctx.strokeStyle = col(h, [40, 40, 44], 0.85); ctx.lineWidth = Math.max(0.12, V.min * 0.5);
+  ctx.beginPath();
+  for (const w of Wd.wires) {
+    if (!visible(w.mx, w.my, SP)) continue;
+    const a = w2s(w.ax, w.ay, w.h), m = w2s(w.mx, w.my, w.h - w.sag), b = w2s(w.bx, w.by, w.h);
+    ctx.moveTo(a[0], a[1]); ctx.quadraticCurveTo(m[0], m[1], b[0], b[1]);
+  }
+  ctx.stroke();
+  // pylons: a vertical shaft with a crossarm
+  for (const p of Wd.pylons) {
+    if (!visible(p.x, p.y, 20)) continue;
+    const base = w2s(p.x, p.y, 0), top = w2s(p.x, p.y, p.h);
+    const tx = p.kind === 'tx';
+    ctx.strokeStyle = col(h, tx ? [120, 120, 126] : [96, 78, 56], 0.95);
+    ctx.lineWidth = Math.max(tx ? 0.5 : 0.3, V.min * (tx ? 1.1 : 0.7));
+    ctx.beginPath(); ctx.moveTo(base[0], base[1]); ctx.lineTo(top[0], top[1]); ctx.stroke();
+    if (tx) {
+      const aw = 7, ax = Math.cos(p.dir) * aw, ay = Math.sin(p.dir) * aw;
+      for (let L = 0; L < 2; L++) {
+        const c = w2s(p.x, p.y, p.h - L * 4.2), l = w2s(p.x - ax, p.y - ay, p.h - L * 4.2), r = w2s(p.x + ax, p.y + ay, p.h - L * 4.2);
+        ctx.beginPath(); ctx.moveTo(l[0], l[1]); ctx.lineTo(r[0], r[1]); ctx.stroke();
+        ctx.moveTo(c[0], c[1]);
+      }
+    }
+  }
 }
 function drawFires() {
   for (const f of G.fires) {
@@ -1864,6 +1931,30 @@ for (const b of document.querySelectorAll('#touch [data-act]')) {
 // ============================================================ menus / flow
 const $ = id => document.getElementById(id);
 const show = (id, on) => $(id).classList.toggle('hidden', !on);
+let suspended = false;
+// Tabbed menu: UAV Strike (this file) / FPV Stunts / FPV Strike (js/fpv.js).
+function selectTab(name) {
+  for (const t of document.querySelectorAll('#tabs .tab')) t.classList.toggle('on', t.dataset.tab === name);
+  for (const p of document.querySelectorAll('.tabpane')) p.classList.toggle('hidden', p.dataset.pane !== name);
+  store.set('steppehawk.tab', name);
+}
+function initTabs() {
+  const tabs = document.getElementById('tabs');
+  if (!tabs) return;
+  for (const t of tabs.querySelectorAll('.tab')) t.onclick = () => { Snd.init(); selectTab(t.dataset.tab); };
+  selectTab(store.get('steppehawk.tab', 'uav'));
+}
+// Hand the screen to an FPV mode: freeze the UAV loop and hide its canvas/controls.
+function suspendUAV() {
+  suspended = true; state = 'menu';
+  for (const id of ['menu', 'brief', 'pause', 'end', 'touch']) show(id, false);
+  cv.style.display = 'none';
+}
+function resumeUAV() {
+  suspended = false; cv.style.display = '';
+  resize(); last = performance.now();
+  toMenu();
+}
 function buildMenu() {
   const best = store.get('steppehawk.best', {});
   const list = $('missionList'); list.innerHTML = '';
@@ -1929,7 +2020,7 @@ function endMission() {
       best[M.id] = { grade, score }; store.set('steppehawk.best', best);
     }
   }
-  $('eTitle').textContent = win ? 'MISSION COMPLETE' : 'MISSION FAILED';
+  $('eTitle').textContent = win ? 'VICTORY' : 'MISSION FAILED';
   $('eBody').innerHTML = `<div class="grade ${win ? '' : 'f'}">${grade}</div>
     <p>${G.over.reason}.</p>
     <div class="kv">
@@ -1965,6 +2056,7 @@ function adaptResolution(dt, ms) {
   else if (workMs < 6 && renderScale < 1) { renderScale = Math.min(1, Math.round((renderScale + 0.15) * 100) / 100); resize(); }
 }
 window.__nativeBack = () => {
+  if (window.SteppeHawkFPV && window.SteppeHawkFPV.active) return window.SteppeHawkFPV.onBack();
   if (state === 'play') { pauseGame(); return true; }
   if (state === 'pause') { resumeGame(); return true; }
   if (state === 'end') { toMenu(); return true; }
@@ -1972,7 +2064,8 @@ window.__nativeBack = () => {
   return false;
 };
 function frame(now) {
-  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  const dt = Math.max(0, Math.min(0.05, (now - last) / 1000)); last = now;
+  if (suspended) { last = performance.now(); requestAnimationFrame(frame); return; }
   const t0 = performance.now();
   if (G) {
     if (state === 'play') { keySlew(dt); update(dt); }
@@ -1986,7 +2079,24 @@ function frame(now) {
   }
   requestAnimationFrame(frame);
 }
+initTabs();
 toMenu();
 requestAnimationFrame(frame);
+
+// Shared API for the 3D FPV modes (js/fpv.js). They reuse the world generator, the audio context
+// and the fold/layout plumbing, and hand the screen back and forth through suspend/resume.
+window.SteppeHawk = {
+  THREE_SRC: 'js/vendor/three.min.js',
+  WORLD, SP, ZOOMS, WEAPONS, VT, MISSIONS,
+  Snd, genWorld,
+  get isTouch() { return isTouch; }, get isNative() { return isNative; },
+  get fold() { return foldInfo; },
+  get segments() { return segments(); },
+  util: { clamp, lerp, rr, ri, pick, chance, hyp, TAU, mulberry32, fbm, makeNoise, setSeed(s) { rnd = mulberry32(s); }, distSeg },
+  suspend: suspendUAV,
+  resume: resumeUAV,
+  selectTab,
+  onResize(cb) { window.addEventListener('resize', cb); if (window.viewport && window.viewport.addEventListener) window.viewport.addEventListener('segmentschange', cb); },
+};
 window.__steppehawk = { get G() { return G; }, get state() { return state; }, get layout() { return { LAYOUT, VR: { ...VR, w: W, h: H }, PANEL, MMP, renderScale }; }, startMission, fire, lockAt, MISSIONS };
 })();

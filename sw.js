@@ -1,6 +1,7 @@
 // Offline cache for the installed Android/PWA build. Bump VERSION when shipping changes.
-const VERSION = 'steppehawk-v2';
-const ASSETS = ['./', './index.html', './style.css', './js/game.js', './manifest.webmanifest',
+const VERSION = 'steppehawk-v3';
+const ASSETS = ['./', './index.html', './style.css', './js/game.js', './js/fpv.js',
+  './js/vendor/three.min.js', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(VERSION).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));

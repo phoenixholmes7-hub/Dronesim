@@ -1,10 +1,14 @@
-# Steppe Hawk: UAV Strike Simulator
+# Steppe Hawk: UAV & FPV Drone Simulator
 
-A browser game about flying a military drone over the Ukrainian steppe. You fly as a Ukrainian UAV operator and see the battlefield through the drone's gimballed thermal/TV camera. You find enemy armour, air defences and artillery, confirm what each target is, and guide your weapons onto them by laser. The rules of engagement penalize civilian casualties.
+A browser game about flying military drones over the Ukrainian steppe. A tabbed menu opens three ways to play the same procedurally-generated world:
 
-It has no dependencies and no build step. It's plain HTML5 canvas and JavaScript. It runs in any modern browser, ships as an Android APK, and adapts to foldables.
+- **UAV Strike** — the original top-down sim. You fly a reconnaissance-strike UAV and see the battlefield through a gimballed thermal/TV camera, finding and identifying armour, air defences and artillery and guiding weapons onto them by laser. The rules of engagement penalize civilian casualties.
+- **FPV Stunts** — a 3D first-person view quad flown over the same village, fields and river. Freestyle trick scoring (flips, rolls, power loops, dives and gaps under the bridge, the power lines and between buildings) with combos, plus timed **gate-race** courses.
+- **FPV Strike** — first-person attack sorties: one-way diving strikes on armour, and a reusable **FPV bomber** that releases ballistic munitions. Analog goggle feed, motor sound, flak, cool explosions and tumbling wreckage. A work of fiction.
 
-## Missions
+The UAV mode is plain HTML5 canvas and needs nothing. The FPV modes use [three.js](https://threejs.org), vendored locally in `js/vendor/` (see its README), so they load with no network and work offline in the app. There is no build step for the web game. It runs in any modern browser, ships as an Android APK, and adapts to foldables.
+
+## UAV missions
 
 | # | Mission | Setting | Objective |
 |---|---------|---------|-----------|
@@ -39,6 +43,22 @@ The world is generated procedurally for each mission. It includes wheat, sunflow
 | Orbit (tight / standoff) | **ORBIT** | O |
 | Jump camera | Tap the minimap | Click the minimap |
 | Pause | **II** | Esc or P |
+
+## FPV modes (3D)
+
+Pick **FPV Stunts** or **FPV Strike** from the menu tabs. The feed is a goggle-style first-person view with a vignette, scanlines, analog static that breaks up on hits, an OSD (mode, speed, altitude, battery and throttle) and motor sound.
+
+| Sortie | Tab | What it is |
+|---|---|---|
+| **Free Fly / Golden Hour** | FPV Stunts | Open freestyle. Score tricks and find the gaps, no clock. |
+| **Trick Park** | FPV Stunts | Score attack against the clock; the bridge, wires and alley gaps pay big in combos. |
+| **Gate Race — River Run / Village Sprint** | FPV Stunts | Fly the gates in order against the clock. |
+| **Column Hunt / Defence Suppression / Depot Raid** | FPV Strike | One-way diving FPV strikes on armour, dodging flak. |
+| **FPV Bomber — Trench Line / Night Drops** | FPV Strike | A reusable bomber quad: fly over the target and release munitions that fall with your speed. |
+
+- **Flight modes.** *Self-levelling* holds the horizon for you; *acro* gives full rate control for flips, rolls and loops but will not catch you. Switch with **MODE** / `M`.
+- **Controls.** Touch: left stick throttle + yaw, right stick pitch + roll, plus on-screen buttons. Keyboard: `W`/`S` throttle, `A`/`D` yaw, arrows (or `I`/`K`/`J`/`L`) pitch + roll, `Shift` boost, `Space` strike / drop, `R` new drone, `M` flight mode. A twin-stick **gamepad** (Mode 2) is supported.
+- **Scoring.** Tricks and gaps chain into combos for a score multiplier; strike and bomb sorties score per vehicle destroyed. Hitting civilian traffic ends a strike sortie. Best scores and race times are saved on the device.
 
 ## Android app (APK)
 
@@ -92,9 +112,11 @@ Opening `index.html` directly from disk also works. The service worker (offline 
 
 ## Files
 
-- `index.html`: page shell, menus and touch controls
+- `index.html`: page shell, tabbed menu and touch controls
 - `style.css`: UI styling
-- `js/game.js`: the whole game (world generation, simulation, rendering, HUD, input)
+- `js/game.js`: the 2D UAV game (world generation, simulation, rendering, HUD, input) and the shared world/audio API
+- `js/fpv.js`: the 3D FPV modes (stunt, race, strike, bomber) built on three.js
+- `js/vendor/three.min.js`: three.js, vendored locally so the FPV modes run offline (see `js/vendor/README.md`)
 - `manifest.webmanifest`, `sw.js`, `icons/`: PWA install and offline support
 - `android/`: native Android app wrapper (APK)
 - `.github/workflows/android.yml`: builds the APK and publishes it to Releases
