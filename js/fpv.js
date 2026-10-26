@@ -173,16 +173,40 @@ function makeTextures() {
   const T = (c, srgb) => { const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 4; if (srgb) t.colorSpace = THREE.SRGBColorSpace; return t; };
   return { wall: T(wc, true), roof: T(rc, true), gbump: T(gb), wbump: T(wb) };
 }
-function addSkyDome(scene, topHex, botHex) {
-  const mat = new THREE.ShaderMaterial({
-    side: THREE.BackSide, depthWrite: false, fog: false,
-    // raw-shader output is written straight to the framebuffer, so feed sRGB-encoded colours
-    uniforms: { top: { value: new THREE.Color(topHex).convertLinearToSRGB() }, bot: { value: new THREE.Color(botHex).convertLinearToSRGB() }, off: { value: 260 }, exp: { value: 0.65 } },
-    vertexShader: 'varying vec3 vW; void main(){ vW=(modelMatrix*vec4(position,1.0)).xyz; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);} ',
-    fragmentShader: 'varying vec3 vW; uniform vec3 top; uniform vec3 bot; uniform float off; uniform float exp; void main(){ float h=normalize(vW+vec3(0.0,off,0.0)).y; gl_FragColor=vec4(mix(bot,top,pow(max(h,0.0),exp)),1.0);} ',
-  });
-  const dome = new THREE.Mesh(new THREE.SphereGeometry(3200, 24, 12), mat);
-  dome.frustumCulled = false; dome.renderOrder = -1; scene.add(dome); return dome;
+// gradient sky as a tonemapped textured dome (consistent with ACES tone mapping and usable for IBL)
+function makeSky(scene, zenith, mid, horizon) {
+  const c = document.createElement('canvas'); c.width = 16; c.height = 256; const g = c.getContext('2d');
+  const grd = g.createLinearGradient(0, 0, 0, 256);
+  grd.addColorStop(0, '#' + new THREE.Color(zenith).getHexString());
+  grd.addColorStop(0.55, '#' + new THREE.Color(mid).getHexString());
+  grd.addColorStop(1, '#' + new THREE.Color(horizon).getHexString());
+  g.fillStyle = grd; g.fillRect(0, 0, 16, 256);
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(3200, 24, 14),
+    new THREE.MeshBasicMaterial({ map: tex, side: THREE.BackSide, fog: false, depthWrite: false }));
+  dome.renderOrder = -1; dome.frustumCulled = false; scene.add(dome);
+  return { dome, tex };
+}
+// soft drifting cloud layer (horizontal billboards seen from below)
+function makeClouds3D(scene, cfg, night) {
+  if (cfg.weather === 'clear' && !night) return null;
+  const cc = document.createElement('canvas'); cc.width = cc.height = 128; const cg = cc.getContext('2d');
+  const grd = cg.createRadialGradient(64, 64, 4, 64, 64, 62);
+  grd.addColorStop(0, 'rgba(255,255,255,0.9)'); grd.addColorStop(0.5, 'rgba(255,255,255,0.4)'); grd.addColorStop(1, 'rgba(255,255,255,0)');
+  cg.fillStyle = grd; cg.fillRect(0, 0, 128, 128);
+  const tex = new THREE.CanvasTexture(cc); tex.colorSpace = THREE.SRGBColorSpace;
+  const n = cfg.weather === 'overcast' ? 16 : cfg.weather === 'cloud' ? 10 : 7;
+  const tint = night ? 0x2a3444 : (cfg.weather === 'overcast' ? 0x9aa0a8 : 0xf4f6fa);
+  const grp = new THREE.Group();
+  for (let i = 0; i < n; i++) {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1),
+      new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: night ? 0.3 : (cfg.weather === 'overcast' ? 0.6 : 0.5), color: tint, depthWrite: false, fog: true }));
+    m.rotation.x = Math.PI / 2; // face down
+    m.position.set(rr(-O, O), rr(190, 300), rr(-O, O));
+    m.scale.setScalar(rr(260, 560));
+    grp.add(m);
+  }
+  scene.add(grp); return grp;
 }
 
 function buildScene(cfg) {
@@ -200,9 +224,12 @@ function buildScene(cfg) {
   const fogFar = over ? 1700 : night ? 1400 : 2600;
   scene.fog = new THREE.Fog(sky.clone().lerp(new THREE.Color(0xffffff), night ? 0 : 0.15), 120, fogFar);
   const tex = makeTextures();
-  // gradient sky dome for a realistic horizon
-  const horizon = sky.clone().lerp(new THREE.Color(0xffffff), night ? 0.08 : 0.4);
-  const skyDome = addSkyDome(scene, sky.clone().multiplyScalar(night ? 1 : 1.1).getHex(), horizon.getHex());
+  // gradient sky dome for a realistic horizon (also feeds image-based lighting)
+  const zenith = sky.clone().multiplyScalar(night ? 1 : 0.82);
+  const horizon = sky.clone().lerp(new THREE.Color(0xffffff), night ? 0.06 : 0.5);
+  const skyObj = makeSky(scene, zenith.getHex(), sky.getHex(), horizon.getHex());
+  const skyDome = skyObj.dome, skyTex = skyObj.tex;
+  const cloudLayer = makeClouds3D(scene, cfg, night);
 
   // quality tier: shadows on desktop and capable phones only (and droppable at runtime if slow)
   const strong = !API.isTouch || ((navigator.hardwareConcurrency || 4) >= 6 && (navigator.deviceMemory || 4) >= 4);
@@ -320,7 +347,7 @@ function buildScene(cfg) {
   // weather particles
   const weather = addWeather(scene, cfg);
 
-  return { scene, Wd, cfg, night, dusk, over, collBlds, pylons, wires, sun, sunDir, deckH, bxw, gtex, water, skyDome, shadows: strong, tex };
+  return { scene, Wd, cfg, night, dusk, over, collBlds, pylons, wires, sun, sunDir, deckH, bxw, gtex, water, skyDome, skyTex, cloudLayer, shadows: strong, tex };
 }
 
 function addRoads(scene, Wd, night) {
@@ -358,8 +385,8 @@ function addRiver(scene, Wd, night, cfg, tex) {
   g.computeVertexNormals();
   const c = cfg.winter ? 0xcad6de : night ? 0x18303e : 0x35617a;
   if (tex) tex.wbump.repeat.set(3, 40);
-  const mat = new THREE.MeshStandardMaterial({ color: c, roughness: cfg.winter ? 0.8 : 0.28, metalness: cfg.winter ? 0.0 : 0.35,
-    bumpMap: tex ? tex.wbump : null, bumpScale: 0.25, emissive: new THREE.Color(c).multiplyScalar(0.12) });
+  const mat = new THREE.MeshStandardMaterial({ color: c, roughness: cfg.winter ? 0.8 : 0.16, metalness: cfg.winter ? 0.0 : 0.6,
+    bumpMap: tex ? tex.wbump : null, bumpScale: 0.3, envMapIntensity: 1.2, emissive: new THREE.Color(c).multiplyScalar(0.08) });
   const mesh = new THREE.Mesh(g, mat);
   mesh.frustumCulled = false; scene.add(mesh);
   return mesh;
@@ -604,27 +631,27 @@ function flyQuad(G, dt) {
   const boost = inp.boost ? 1.6 : 1;
   const up = UP.clone().applyQuaternion(Q.q);
   if (Q.mode === 'level') {
-    // forgiving camera-drone feel: gentle self-levelling, altitude hold and auto-brake
-    const maxTilt = 30 * DEG;
-    G.yaw = (G.yaw || 0) + inp.yaw * 100 * DEG * dt;
+    // forgiving camera-drone feel: responsive self-levelling, altitude hold and auto-brake
+    const maxTilt = 34 * DEG;
+    G.yaw = (G.yaw || 0) + inp.yaw * 120 * DEG * dt;
     const qYaw = new THREE.Quaternion().setFromAxisAngle(QY, G.yaw);
     const qTilt = new THREE.Quaternion().setFromEuler(new THREE.Euler(inp.pitch * maxTilt, 0, -inp.roll * maxTilt, 'XYZ'));
-    Q.q.slerp(qYaw.multiply(qTilt), 1 - Math.exp(-10 * dt));
+    Q.q.slerp(qYaw.multiply(qTilt), 1 - Math.exp(-14 * dt));
     // vertical: left stick commands a climb rate; centred = hold altitude (auto-throttle)
     const vyTarget = inp.climb * 9 * boost;
-    let tMag = (9.8 + (vyTarget - Q.v.y) * 3.2) / Math.max(0.4, up.y);
-    tMag = clamp(tMag, 0, 26 * boost);
-    Q.throttle = clamp(tMag / 26, 0, 1);
+    let tMag = (9.8 + (vyTarget - Q.v.y) * 3.4) / Math.max(0.4, up.y);
+    tMag = clamp(tMag, 0, 27 * boost);
+    Q.throttle = clamp(tMag / 27, 0, 1);
     const accel = up.clone().multiplyScalar(tMag); accel.y -= 9.8;
     Q.v.addScaledVector(accel, dt);
-    // auto-brake horizontal drift when the right stick is centred (position-hold feel)
-    const brake = (Math.abs(inp.pitch) + Math.abs(inp.roll)) < 0.08 ? 2.4 : 0.4;
+    // auto-brake horizontal drift when the right stick is near centre (position-hold feel)
+    const brake = (Math.abs(inp.pitch) + Math.abs(inp.roll)) < 0.06 ? 1.8 : 0.35;
     Q.v.x -= Q.v.x * brake * dt; Q.v.z -= Q.v.z * brake * dt;
     const spd = Q.v.length();
-    Q.v.addScaledVector(Q.v, -(0.32 + 0.012 * spd) * dt);
+    Q.v.addScaledVector(Q.v, -(0.26 + 0.011 * spd) * dt);
   } else {
     // acro: full rate control for flips and loops; direct throttle
-    const dq = new THREE.Quaternion().setFromEuler(new THREE.Euler(inp.pitch * 420 * DEG * dt, inp.yaw * 240 * DEG * dt, -inp.roll * 420 * DEG * dt, 'XYZ'));
+    const dq = new THREE.Quaternion().setFromEuler(new THREE.Euler(inp.pitch * 380 * DEG * dt, inp.yaw * 220 * DEG * dt, -inp.roll * 380 * DEG * dt, 'XYZ'));
     Q.q.multiply(dq); Q.q.normalize();
     Q.throttle = lerp(Q.throttle, clamp((inp.climb + 1) / 2, 0, 1), 1 - Math.exp(-8 * dt));
     const accel = up.clone().multiplyScalar(Q.throttle * 28 * boost); accel.y -= 9.8;
@@ -878,11 +905,11 @@ function drawHud(G) {
   const T = (s, x, y, size, c, al = 'left') => { hudCtx.font = font(size); hudCtx.textAlign = al; hudCtx.textBaseline = 'alphabetic'; hudCtx.lineWidth = 3; hudCtx.strokeStyle = 'rgba(0,0,0,0.6)'; hudCtx.strokeText(s, x, y); hudCtx.fillStyle = c; hudCtx.fillText(s, x, y); };
   const u = clamp(Math.min(w, h) / 620, 0.72, 1.3);
 
-  // analog static — a low baseline flicker, spiking on hits, flak, range and a dying battery
+  // analog static — a faint baseline, spiking on hits, flak, long range and a dying battery
   const Q = G.quad;
-  let st = 0.03 + G.staticBurst + 0.015 * Math.random();
-  st += clamp((hyp(wx(Q.p.x) - O, wy(Q.p.z) - O)) / 5200, 0, 0.14); // range noise
-  st += Math.max(0, (0.25 - G.battery)) * 0.8;                       // only a weak battery
+  let st = 0.018 + G.staticBurst + 0.006 * Math.random();
+  st += clamp((hyp(wx(Q.p.x) - O, wy(Q.p.z) - O)) / 11000, 0, 0.05); // slight range noise
+  st += Math.max(0, (0.2 - G.battery)) * 0.9;                        // only a weak battery
   st = clamp(st, 0, 1);
   if (st > 0.05) {
     hudCtx.save(); hudCtx.globalAlpha = Math.min(0.85, st);
@@ -960,7 +987,7 @@ function drawHud(G) {
 // ============================================================ input
 const keys = {};
 function makeInput() {
-  return { thr: 0, throttle: 0.4, yaw: 0, pitch: 0, roll: 0, boost: false, lx: 0, ly: 0, rx: 0, ry: 0 };
+  return { throttle: 0.4, yaw: 0, pitch: 0, roll: 0, climb: 0, boost: false };
 }
 function readInput(G, dt) {
   const inp = G.input;
@@ -988,34 +1015,45 @@ function readInput(G, dt) {
   const ly = G.stickL.active ? G.stickL.y : (gLy || ky);
   const rx = G.stickR.active ? G.stickR.x : (gRx || kr);
   const ry = G.stickR.active ? G.stickR.y : (gRy || kp);
-  // a little expo for fine control around centre
-  const expo = v => clamp(v, -1, 1) * (0.4 + 0.6 * v * v);
-  inp.yaw = expo(lx); inp.roll = expo(rx); inp.pitch = expo(-ry); // stick up = nose down => pitch forward
-  // left-stick Y / W-S is a climb command: push to ascend, centre to hold altitude (self-level)
-  inp.climb = clamp(ly, -1, 1);
+  // response curve: fine control near centre, full authority at the edge (kills twitchiness)
+  const expo = v => { v = clamp(v, -1, 1); return v * (0.45 + 0.55 * v * v); };
+  const tYaw = expo(lx), tRoll = expo(rx), tPitch = expo(-ry), tClimb = clamp(ly, -1, 1); // stick up = nose down
+  // rate-limited smoothing: ramps a hard key-press or stick-slam instead of snapping to full,
+  // yet fast enough (~0.12 s to full) to feel responsive rather than sluggish
+  const k = 1 - Math.exp(-18 * dt);
+  inp.yaw += (tYaw - inp.yaw) * k;
+  inp.roll += (tRoll - inp.roll) * k;
+  inp.pitch += (tPitch - inp.pitch) * k;
+  inp.climb += (tClimb - inp.climb) * k;
 }
-function dead(v) { return Math.abs(v) < 0.12 ? 0 : v; }
+function dead(v) { return Math.abs(v) < 0.14 ? 0 : v; }
 function actionPrimary(G) {
   if (G.cfg.mode === 'bomb') dropBomb(G);
   else if (G.cfg.mode === 'strike') { G.quad.armed = true; G.input.boost = true; flash(G, 'ARMED', '#ffd36a'); }
 }
 function toggleMode(G) { G.quad.mode = G.quad.mode === 'level' ? 'acro' : 'level'; flash(G, G.quad.mode === 'acro' ? 'ACRO' : 'SELF-LEVEL', '#9effa8'); if (G.quad.mode === 'level') G.yaw = new THREE.Euler().setFromQuaternion(G.quad.q, 'YXZ').y; }
 
-// ============================================================ touch sticks
-function bindStick(el, stick) {
-  const knob = el.querySelector('.knob');
-  let id = null;
-  const rad = 66;
-  const set = (cx, cy, e) => {
-    const r = el.getBoundingClientRect(), dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);
-    const d = Math.hypot(dx, dy), cl = Math.min(d, rad), nx = d ? dx / d * cl : 0, ny = d ? dy / d * cl : 0;
-    knob.style.transform = `translate(${nx}px,${ny}px)`;
+// ============================================================ touch sticks (floating)
+function bindStick(zone, stick) {
+  const ring = zone.querySelector('.ring'), knob = zone.querySelector('.knob');
+  let id = null, ox = 0, oy = 0;
+  const rad = 70;
+  const at = (x, y) => { ring.style.left = x + 'px'; ring.style.top = y + 'px'; knob.style.left = x + 'px'; knob.style.top = y + 'px'; };
+  zone.addEventListener('pointerdown', e => {
+    e.preventDefault(); if (id !== null) return;
+    id = e.pointerId; zone.setPointerCapture(id); zone.classList.add('active'); stick.active = true;
+    const r = zone.getBoundingClientRect(); ox = e.clientX; oy = e.clientY; at(e.clientX - r.left, e.clientY - r.top);
+    stick.x = 0; stick.y = 0;
+  });
+  zone.addEventListener('pointermove', e => {
+    if (e.pointerId !== id) return;
+    const dx = e.clientX - ox, dy = e.clientY - oy, d = Math.hypot(dx, dy), cl = Math.min(d, rad);
+    const nx = d ? dx / d * cl : 0, ny = d ? dy / d * cl : 0, r = zone.getBoundingClientRect();
+    knob.style.left = (ox - r.left + nx) + 'px'; knob.style.top = (oy - r.top + ny) + 'px';
     stick.x = clamp(nx / rad, -1, 1); stick.y = clamp(-ny / rad, -1, 1);
-  };
-  el.addEventListener('pointerdown', e => { e.preventDefault(); id = e.pointerId; el.setPointerCapture(id); stick.active = true; set(0, 0, e); });
-  el.addEventListener('pointermove', e => { if (e.pointerId === id) set(0, 0, e); });
-  const up = e => { if (e.pointerId !== id) return; id = null; stick.active = false; knob.style.transform = ''; if (!stick.hold) { stick.x = 0; stick.y = 0; } };
-  el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
+  });
+  const up = e => { if (e.pointerId !== id) return; id = null; zone.classList.remove('active'); stick.active = false; stick.x = 0; stick.y = 0; };
+  zone.addEventListener('pointerup', up); zone.addEventListener('pointercancel', up);
 }
 
 // ============================================================ lifecycle
@@ -1025,9 +1063,10 @@ function ensureDom() {
   wrap.innerHTML = '<canvas id="fpv"></canvas><canvas id="fpvHud"></canvas>';
   document.body.appendChild(wrap);
   const touch = document.createElement('div'); touch.id = 'fpvTouch';
+  // floating sticks: touch anywhere in each half and the stick centres under your thumb (neutral)
   touch.innerHTML =
-    '<div class="stick l" id="stickL"><div class="knob"></div><div class="lbl">THR / YAW</div></div>' +
-    '<div class="stick r" id="stickR"><div class="knob"></div><div class="lbl">PITCH / ROLL</div></div>' +
+    '<div class="stickzone l" id="stickL"><div class="ring"></div><div class="knob"></div><div class="lbl">THROTTLE / YAW</div></div>' +
+    '<div class="stickzone r" id="stickR"><div class="ring"></div><div class="knob"></div><div class="lbl">PITCH / ROLL</div></div>' +
     '<div class="fpvbtns left"><button class="fpvbtn" data-fa="mode">MODE</button><button class="fpvbtn" data-fa="recover">R</button><button class="fpvbtn" data-fa="exit">EXIT</button></div>' +
     '<div class="fpvbtns"><button class="fpvbtn go" data-fa="primary">GO</button><button class="fpvbtn" data-fa="boost">BOOST</button></div>';
   document.body.appendChild(touch);
@@ -1075,6 +1114,18 @@ async function start(cfg) {
   G.renderer.setClearColor(G.scene.background);
   G.renderer.shadowMap.enabled = G.shadows;
   G.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  G.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  G.renderer.toneMappingExposure = G.night ? 1.0 : 1.15;
+  // image-based lighting baked from the sky gradient — soft, realistic reflections on PBR surfaces
+  try {
+    const pmrem = new THREE.PMREMGenerator(G.renderer);
+    const envScene = new THREE.Scene();
+    const envSky = new THREE.Mesh(new THREE.SphereGeometry(10, 16, 10), new THREE.MeshBasicMaterial({ map: G.skyTex, side: THREE.BackSide }));
+    envScene.add(envSky);
+    G.envRT = pmrem.fromScene(envScene, 0.5);
+    G.scene.environment = G.envRT.texture;
+    envSky.geometry.dispose(); envSky.material.dispose(); pmrem.dispose();
+  } catch (e) { /* IBL is optional */ }
   G.camera = new THREE.PerspectiveCamera(92, 1, 0.3, 4000);
   G.cam = { spd: 0 };
   initFx(G);
@@ -1152,6 +1203,7 @@ function loop(now) {
   // shadow sun follows the quad so the shadow map stays tight; water ripples drift
   if (G.shadows) { G.sun.position.copy(G.quad.p).addScaledVector(G.sunDir, 600); G.sun.target.position.copy(G.quad.p); G.sun.target.updateMatrixWorld(); }
   if (G.water && G.water.material.bumpMap) { G.water.material.bumpMap.offset.y += dt * 0.05; G.water.material.bumpMap.offset.x += dt * 0.012; }
+  if (G.cloudLayer) for (const c of G.cloudLayer.children) { c.position.x += dt * 4; if (c.position.x > O + 320) c.position.x -= WORLD + 640; }
   // camera follow (FPV, from the quad with a slight up-tilt)
   const Q = G.quad;
   G.camera.position.copy(Q.p);
@@ -1231,7 +1283,8 @@ function dispose() {
   window.removeEventListener('resize', G.onResize);
   G.motors && G.motors.stop();
   // free GPU resources
-  G.scene.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) { const m = o.material; (Array.isArray(m) ? m : [m]).forEach(x => { if (x.map) x.map.dispose(); x.dispose(); }); } });
+  G.scene.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) { const m = o.material; (Array.isArray(m) ? m : [m]).forEach(x => { if (x.map) x.map.dispose(); if (x.bumpMap) x.bumpMap.dispose(); x.dispose(); }); } });
+  if (G.envRT) G.envRT.dispose();
   G.renderer.dispose();
   S = null;
   window.SteppeHawkFPV.active = false;

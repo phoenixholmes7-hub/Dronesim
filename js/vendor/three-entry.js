@@ -5,7 +5,7 @@ export {
   MeshBasicMaterial, MeshLambertMaterial, MeshPhongMaterial, MeshStandardMaterial, ShaderMaterial, PointsMaterial, LineBasicMaterial, SpriteMaterial,
   CanvasTexture, DataTexture, Texture, Color, Vector2, Vector3, Vector4, Quaternion, Euler, Matrix4, Matrix3, MathUtils, Fog, FogExp2,
   AmbientLight, HemisphereLight, DirectionalLight, PointLight, Clock, Raycaster, Box3, Sphere, Frustum,
-  RepeatWrapping, ClampToEdgeWrapping, LinearFilter, LinearMipmapLinearFilter, NearestFilter, RGBAFormat, UnsignedByteType, HalfFloatType,
-  DoubleSide, FrontSide, BackSide, AdditiveBlending, NormalBlending, SRGBColorSpace, LinearSRGBColorSpace, NoToneMapping, ACESFilmicToneMapping,
-  DynamicDrawUsage, REVISION
+  RepeatWrapping, ClampToEdgeWrapping, MirroredRepeatWrapping, LinearFilter, LinearMipmapLinearFilter, NearestFilter, RGBAFormat, UnsignedByteType, HalfFloatType,
+  DoubleSide, FrontSide, BackSide, AdditiveBlending, NormalBlending, SRGBColorSpace, LinearSRGBColorSpace, NoToneMapping, ACESFilmicToneMapping, PCFSoftShadowMap,
+  PMREMGenerator, EquirectangularReflectionMapping, DynamicDrawUsage, REVISION
 } from 'three';

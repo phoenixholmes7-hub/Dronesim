@@ -972,10 +972,10 @@ function update(dt) {
     else { G.aimT.x = e.x; G.aimT.y = e.y; }
   }
   G.aimT.x = clamp(G.aimT.x, 0, WORLD); G.aimT.y = clamp(G.aimT.y, 0, WORLD);
-  const ka = Math.min(1, dt * 7);
+  const ka = Math.min(1, dt * 11);
   G.aim.x += (G.aimT.x - G.aim.x) * ka; G.aim.y += (G.aimT.y - G.aim.y) * ka;
   const fT = ZOOMS[G.fovI] * (G.fovFine || 1);
-  G.fov = Math.exp(lerp(Math.log(G.fov), Math.log(fT), Math.min(1, dt * 6)));
+  G.fov = Math.exp(lerp(Math.log(G.fov), Math.log(fT), Math.min(1, dt * 9)));
   updateDrone(dt);
   // PID
   if (G.lock && G.lock.type === 'ent' && G.lock.e.alive && !G.lock.e.identified) {
@@ -2176,7 +2176,8 @@ function keySlew(dt) {
   if (keys['s'] || keys['arrowdown']) dy -= 1;
   if (!dx && !dy) return;
   breakLock();
-  const sp = G.fov * 0.55 * dt;
+  // slew speed scales with zoom but is capped so wide FOV isn't hair-trigger fast
+  const sp = clamp(G.fov, 140, 900) * 0.6 * dt;
   G.aimT.x += (V.rx * dx + V.fx * dy) * sp; G.aimT.y += (V.ry * dx + V.fy * dy) * sp;
 }
 for (const b of document.querySelectorAll('#touch [data-act]')) {

@@ -115,13 +115,14 @@ canvas#fpvHud { position: absolute; inset: 0; width: 100%; height: 100%; display
 
 #fpvTouch { position: fixed; inset: 0; z-index: 6; pointer-events: none; display: none; }
 #fpvTouch.on { display: block; }
-.stick { position: absolute; bottom: max(18px, env(safe-area-inset-bottom)); width: 172px; height: 172px; border-radius: 50%;
-  border: 1px solid rgba(160,255,170,0.35); background: rgba(10,30,16,0.3); pointer-events: auto; touch-action: none; }
-.stick.l { left: max(16px, env(safe-area-inset-left)); }
-.stick.r { right: max(16px, env(safe-area-inset-right)); }
-.stick .knob { position: absolute; left: 50%; top: 50%; width: 66px; height: 66px; margin: -33px 0 0 -33px; border-radius: 50%;
-  background: rgba(120,255,140,0.3); border: 1px solid rgba(160,255,170,0.65); }
-.stick .lbl { position: absolute; left: 0; right: 0; bottom: -18px; text-align: center; font-size: 10px; letter-spacing: 0.12em; color: #7fb58a; }
+/* floating sticks: each zone is a large touch area; the ring/knob appear where you press */
+.stickzone { position: absolute; top: 28%; bottom: 0; width: 46%; pointer-events: auto; touch-action: none; }
+.stickzone.l { left: 0; } .stickzone.r { right: 0; }
+.stickzone .ring, .stickzone .knob { position: absolute; border-radius: 50%; opacity: 0; transition: opacity 0.12s; pointer-events: none; }
+.stickzone .ring { width: 150px; height: 150px; margin: -75px 0 0 -75px; border: 1px solid rgba(160,255,170,0.4); background: rgba(10,30,16,0.26); }
+.stickzone .knob { width: 64px; height: 64px; margin: -32px 0 0 -32px; background: rgba(120,255,140,0.32); border: 1px solid rgba(160,255,170,0.7); }
+.stickzone.active .ring, .stickzone.active .knob { opacity: 1; }
+.stickzone .lbl { position: absolute; left: 0; right: 0; bottom: max(10px, env(safe-area-inset-bottom)); text-align: center; font-size: 10px; letter-spacing: 0.12em; color: #7fb58a; opacity: 0.8; }
 .fpvbtns { position: absolute; right: max(12px, env(safe-area-inset-right)); top: 50%; transform: translateY(-50%);
   display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
 .fpvbtns.left { left: max(12px, env(safe-area-inset-left)); right: auto; }
