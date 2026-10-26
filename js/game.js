@@ -473,8 +473,10 @@ function buildGround(Wd, M) {
     return c;
   };
   const L = M.light;
-  Wd.gWhot = mk((i, d, o) => { const v = clamp(heat[i], 0, 1) * 255; d[o] = d[o + 1] = d[o + 2] = v; });
-  Wd.gBhot = mk((i, d, o) => { const v = 255 - clamp(heat[i], 0, 1) * 255; d[o] = d[o + 1] = d[o + 2] = v; });
+  // thermal ground: matching S-curve contrast so the sensor image reads crisp like gunsight footage
+  const thermC = h => clamp((clamp(h, 0, 1) - 0.44) * 1.42 + 0.46, 0, 1);
+  Wd.gWhot = mk((i, d, o) => { const v = thermC(heat[i]) * 255; d[o] = d[o + 1] = d[o + 2] = v; });
+  Wd.gBhot = mk((i, d, o) => { const v = (1 - thermC(heat[i])) * 255; d[o] = d[o + 1] = d[o + 2] = v; });
   Wd.gTv = mk((i, d, o) => { d[o] = cr[i] * L; d[o + 1] = cg[i] * L; d[o + 2] = cb[i] * L * (L < 0.5 ? 1.35 : 1); });
   Wd.gDay = mk((i, d, o) => { d[o] = cr[i]; d[o + 1] = cg[i]; d[o + 2] = cb[i]; });
   Wd.groundHeat = night ? 0.16 : win ? 0.12 : 0.33;
@@ -1445,7 +1447,11 @@ function col(h, day, a = 1) {
     if (h > 0.93) { r = 255; g = 200; b = 120; }
     else { r = day[0] * L; g = day[1] * L; b = day[2] * L * (L < 0.5 ? 1.35 : 1); }
   } else {
-    let v = clamp(h, 0, 1); if (V.pal === 1) v = 1 - v;
+    // crisper thermal: an S-curve lifts hot spots toward white and drops cool ground, so
+    // structures and vehicles stand out like real white-hot gunsight footage
+    let v = clamp(h, 0, 1);
+    v = clamp((v - 0.44) * 1.42 + 0.46, 0, 1);
+    if (V.pal === 1) v = 1 - v;
     r = g = b = v * 255;
   }
   return 'rgba(' + (r | 0) + ',' + (g | 0) + ',' + (b | 0) + ',' + a + ')';

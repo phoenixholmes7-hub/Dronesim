@@ -1,5 +1,5 @@
 // Offline cache for the installed Android/PWA build. Bump VERSION when shipping changes.
-const VERSION = 'steppehawk-v6';
+const VERSION = 'steppehawk-v7';
 const ASSETS = ['./', './index.html', './style.css', './js/game.js', './js/fpv.js',
   './js/vendor/three.min.js', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png'];
