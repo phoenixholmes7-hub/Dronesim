@@ -547,9 +547,13 @@ function newGame(mi, demo = false) {
     drone: { cx: 2000, cy: 2000, ang: rr(0, TAU), R: 2400, Rt: 2400, alt: 4000, x: 0, y: 0, hp: 100, hdg: 0 },
     orbitStandoff: false, pal: M.light < 0.5 ? 0 : 0, sel: 'LGM', ammo: Object.assign({}, M.ammo), rail: 0, flares: 6, flareT: 0,
     stats: { host: 0, civ: 0, shots: 0, hits: 0, structs: 0, hostVeh: 0 }, msgs: [], pois: [], objectives: [],
-    over: null, endT: 0, static: 0, shake: 0, whiteout: 0, warnBeep: 0, help: !demo && mi === 0, helpT: 0, samArmed: true,
+    over: null, endT: 0, static: 0, shake: 0, whiteout: 0, warnBeep: 0, help: !demo && mi === 0 && !M.training, helpT: 0, samArmed: true,
     firstImpact: false,
+    weather: M.weather || (M.winter ? 'snow' : 'fair'),
+    clouds: [], wind: { x: rr(-10, 10), y: rr(-10, 10) }, windT: 0,
+    training: !demo && !!M.training, trainStep: 0, trainDone: {},
   };
+  makeClouds(G);
   populate(G);
   M.setup(G);
   G.aimT.x = G.aim.x; G.aimT.y = G.aim.y;
@@ -595,6 +599,24 @@ function populate(G) {
     const f = pick(Wd.fields.filter(f => f.crop === 'soil' || f.crop === 'wheat'));
     const v = mkVeh('tractor', { parked: true, x: (f.x0 + f.x1) / 2, y: (f.y0 + f.y1) / 2, day: [40, 120, 60], field: f, fdir: f.dir, maxSpd: 3 });
     v.hd = f.dir ? Math.PI / 2 : 0; G.vehs.push(v);
+  }
+}
+
+// ------------------------------------------------------------ weather & cloud shadows
+function makeClouds(G) {
+  const dens = { clear: 2, fair: 5, cloud: 10, overcast: 15, rain: 14, snow: 8, fog: 4, dust: 5 }[G.weather] || 5;
+  const dark = G.weather === 'overcast' || G.weather === 'rain' ? 0.34 : G.weather === 'cloud' ? 0.24 : 0.16;
+  for (let k = 0; k < dens; k++) {
+    G.clouds.push({ x: rr(-400, WORLD + 400), y: rr(-400, WORLD + 400), rx: rr(180, 520), ry: rr(140, 380), a: rr(0.5, 1) * dark, ph: rr(0, TAU) });
+  }
+}
+function updateClouds(dt) {
+  G.windT += dt;
+  const wob = 1 + 0.15 * Math.sin(G.windT * 0.2);
+  for (const c of G.clouds) {
+    c.x += G.wind.x * dt * wob; c.y += G.wind.y * dt * wob;
+    if (c.x < -600) c.x += WORLD + 1200; else if (c.x > WORLD + 600) c.x -= WORLD + 1200;
+    if (c.y < -600) c.y += WORLD + 1200; else if (c.y > WORLD + 600) c.y -= WORLD + 1200;
   }
 }
 
@@ -645,6 +667,31 @@ function samSite(G, e, radar, range, rangeBlind) {
 }
 
 const MISSIONS = [
+  {
+    id: 't0', name: 'FLIGHT TRAINING', sub: 'Learn the sensor, the track and the shot', tod: 'SUMMER · DAY', light: 1, seed: 1000, training: true, weather: 'fair',
+    region: 'Training range west of Zelena Balka',
+    timeLimit: 900, civLimit: 9, ammo: { LGM: 6, LGB: 2 },
+    brief: [
+      'Welcome to Steppe Hawk. This is a safe range with derelict target vehicles and no threats. Your instructor will walk you through the sensor, positive identification and a guided shot.',
+      'Follow the prompts in the top-left radio log. Take your time — there is no clock pressure and nothing here will shoot back.',
+    ],
+    threats: 'None. A safe training range.',
+    setup(G) {
+      const cx = 1250, cy = 2760;
+      clearArea(G, cx, cy, 130);
+      const hulks = [
+        mkVeh('tank', { hostile: true, parked: true, x: cx, y: cy, hd: 0.4, heat: 0.5 }),
+        mkVeh('ifv', { hostile: true, parked: true, x: cx + 34, y: cy - 10, hd: 1.1, heat: 0.5 }),
+        mkVeh('truck', { hostile: true, parked: true, x: cx - 30, y: cy + 14, hd: 0.2, heat: 0.45 }),
+      ];
+      G.vehs.push(...hulks);
+      G.trainRange = { x: cx, y: cy };
+      G.objectives = [{ text: 'Complete the training syllabus', done: () => G.trainStep >= TRAIN_STEPS.length, count: () => Math.min(G.trainStep, TRAIN_STEPS.length) + '/' + TRAIN_STEPS.length }];
+      G.pois.push({ x: cx, y: cy, r: 160, label: 'RANGE' });
+      G.aim.x = 1900; G.aim.y = 2300; G.fovI = 0;
+      msg('Steppe Hawk, this is your instructor. Welcome aboard. Let\'s start with the camera.', '#9fd8ff', 'INSTRUCTOR');
+    },
+  },
   {
     id: 'm1', name: 'STEPPE SHIELD', sub: 'SEAD — destroy an air-defence battery', tod: 'SUMMER · DAY', light: 1, seed: 1941,
     region: 'Kharkiv sector, east of the village of Zelena Balka',
@@ -788,7 +835,118 @@ const MISSIONS = [
       msg('Steppe Hawk, the HVT vehicle is under your crosshair now. Track it and wait for open ground. Keep it clean.', '#9fd8ff', 'DNIPRO');
     },
   },
+  {
+    id: 'm5', name: 'BRIDGE DENIAL', sub: 'Destroy a river-crossing team', tod: 'SUMMER · RAIN', light: 0.8, seed: 5521, weather: 'rain',
+    region: 'West bank of the Siverskyi crossing',
+    timeLimit: 480, civLimit: 2, ammo: { LGM: 6, LGB: 2 },
+    brief: [
+      'Enemy engineers are assembling a pontoon crossing beside the road bridge in the rain. Trucks, a fuel bowser and an escorting IFV are working at the water\'s edge.',
+      'Destroy the bridging group before the crossing is ready. The fuel bowser will cook off — use it.',
+      'A short-range SAM covers the site. Watch your warning and use flares.',
+    ],
+    threats: 'Short-range SAM at the crossing. Rain reduces contrast.',
+    setup(G) {
+      const Wd = G.Wd, bx = Wd.riverX(2000), cx = bx - 150, cy = 2000;
+      clearArea(G, cx, cy, 70);
+      const grp = [
+        mkVeh('truck', { hostile: true, parked: true, x: cx, y: cy - 16, hd: 0, heat: 0.5 }),
+        mkVeh('truck', { hostile: true, parked: true, x: cx - 20, y: cy + 10, hd: 0.3, heat: 0.5 }),
+        mkVeh('fuel', { hostile: true, parked: true, x: cx - 40, y: cy - 4, hd: 0.1, heat: 0.45, day: [92, 98, 70] }),
+        mkVeh('ifv', { hostile: true, parked: true, x: cx + 18, y: cy + 20, hd: 1.0, heat: 0.55 }),
+      ];
+      const tel = mkVeh('tel', { hostile: true, parked: true, x: cx - 54, y: cy - 46, hd: 0.2, heat: 0.5 });
+      samSite(G, tel, null, 0, 2300); berm(G, tel.x, tel.y, 9);
+      G.vehs.push(...grp, tel);
+      infantry(G, 5, cx, cy, 45);
+      G.objectives = [
+        { text: 'Destroy the bridging group (4 vehicles)', done: () => grp.every(v => !v.alive), count: () => grp.filter(v => !v.alive).length + '/4' },
+        { text: '(Optional) Destroy the SAM', done: () => !tel.alive, optional: true },
+      ];
+      G.pois.push({ x: cx, y: cy, r: 200, label: 'ENGINEERS' });
+      G.aim.x = lerp(2000, cx, 0.5); G.aim.y = 2000; G.fovI = 2;
+      msg('Steppe Hawk, enemy engineers are laying a pontoon by the bridge. Destroy their equipment before the crossing opens. Expect a SAM.', '#9fd8ff', 'DNIPRO');
+    },
+  },
+  {
+    id: 'm6', name: 'NIGHT CONVOY', sub: 'Interdict a resupply run after dark', tod: 'SUMMER · NIGHT', light: 0.16, seed: 6627, weather: 'clear',
+    region: 'Main supply route east of Zelena Balka',
+    timeLimit: 480, civLimit: 2, ammo: { LGM: 7, LGB: 1 },
+    brief: [
+      'A night resupply convoy — fuel, ammunition trucks and an IFV escort — is running east on the highway toward the front.',
+      'Destroy the convoy before it clears your sector to the east. Engines and crews glow on thermal; use white-hot.',
+      'A mobile SAM is hidden nearby and will wake once you strike. Keep your flares ready.',
+    ],
+    threats: 'Hidden mobile SAM (wakes on first strike).',
+    setup(G) {
+      const Wd = G.Wd, path = [];
+      for (let i = 0; i <= 16; i++) path.push(Wd.node(i, 8));
+      const order = ['ifv', 'fuel', 'truck', 'truck', 'ifv'];
+      const col = order.map((type, k) => {
+        const v = mkVeh(type, { hostile: true, maxSpd: 9, onEnd: 'exit', heat: 0.6, column: true });
+        if (type === 'fuel') v.day = [92, 98, 70];
+        setPath(v, path, -k * 24 - 10); G.vehs.push(v); return v;
+      });
+      const f = farmFor(G, 1, -1);
+      const tel = mkVeh('tel', { hostile: true, parked: true, x: f.yard.x, y: f.yard.y + 8, hd: 0, heat: 0.5 });
+      samSite(G, tel, null, 0, 2800); tel.sam.active = false; G.vehs.push(tel);
+      infantry(G, 3, f.yard.x, f.yard.y, 20);
+      G.objectives = [
+        { text: 'Destroy the resupply convoy (5 vehicles)', done: () => col.every(v => !v.alive), count: () => col.filter(v => !v.alive).length + '/5' },
+        { text: '(Optional) Destroy the mobile SAM', done: () => !tel.alive, optional: true },
+      ];
+      G.failCheck = () => col.some(v => v.escaped) ? 'A convoy vehicle left the sector' : null;
+      G.pois.push({ ent: col[0], label: 'CONVOY', until: 80 });
+      G.aim.x = 420; G.aim.y = 2000; G.fovI = 2; G.pal = 0;
+      msg('Steppe Hawk, a resupply convoy is on the highway heading east. Catch it before it leaves the sector. A mobile SAM will wake once you strike.', '#9fd8ff', 'DNIPRO');
+    },
+  },
+  {
+    id: 'm7', name: 'BLIND EYE', sub: 'Hunt an EW jammer in the fog', tod: 'SUMMER · FOG', light: 0.72, seed: 7733, weather: 'fog',
+    region: 'Fog-bound fields south-west of Zelena Balka',
+    timeLimit: 540, civLimit: 2, ammo: { LGM: 6, LGB: 1 },
+    brief: [
+      'An enemy electronic-warfare station is jamming our drones from a hide in the fog. Its radar emitter turns slowly; find it by eye.',
+      'Destroy the radar/jammer and the SAM launcher covering it. Visibility is poor — zoom carefully and confirm before you shoot.',
+      'A staff vehicle and infantry are on site.',
+    ],
+    threats: 'SAM launcher (radar-cued). Thick fog cuts your sensor range.',
+    setup(G) {
+      const f = farmFor(G, -1, 1), cx = f.x + 40, cy = f.y - 30;
+      clearArea(G, cx, cy, 75);
+      const radar = mkVeh('radar', { hostile: true, parked: true, x: cx, y: cy, hd: 0.2, heat: 0.6, eng: 0.7 });
+      const tel = mkVeh('tel', { hostile: true, parked: true, x: cx - 32, y: cy - 20, hd: 1.1, heat: 0.5 });
+      samSite(G, tel, radar, 3800, 2200); berm(G, tel.x, tel.y, 9); berm(G, radar.x, radar.y, 8);
+      G.vehs.push(radar, tel, mkVeh('staff', { hostile: true, parked: true, x: cx + 16, y: cy - 28, hd: 0, heat: 0.5 }));
+      infantry(G, 5, cx, cy, 40);
+      G.objectives = [
+        { text: 'Destroy the EW radar/jammer', done: () => !radar.alive },
+        { text: 'Destroy the SAM launcher', done: () => !tel.alive },
+      ];
+      G.pois.push({ x: cx + rr(-110, 110), y: cy + rr(-110, 110), r: 340, label: 'EMITTER' });
+      G.aim.x = lerp(2000, cx, 0.4); G.aim.y = lerp(2000, cy, 0.4); G.fovI = 1;
+      msg('Steppe Hawk, an enemy jammer is blinding our drones from the fog to the south-west. Find the emitter and its launcher and take them down.', '#9fd8ff', 'DNIPRO');
+    },
+  },
 ];
+
+// training syllabus: each step shows a prompt and advances when its condition is met
+const TRAIN_STEPS = [
+  { msg: 'First, the camera. Drag the view (or use WASD / arrow keys) to bring the crosshair onto the RANGE marker to the west.', done: () => hyp(G.aim.x - G.trainRange.x, G.aim.y - G.trainRange.y) < 220 },
+  { msg: 'Good. Now zoom in — pinch, the + / − buttons or the zoom slider — until the FOV reads 150 m or tighter.', done: () => G.fov <= 170 },
+  { msg: 'There are the derelicts. Tap a vehicle to lock a track on it (or centre it and press TRK / Space).', done: () => G.lock && G.lock.type === 'ent' },
+  { msg: 'Hold the track and stay zoomed in to get a positive ID. A hostile gets a red diamond.', done: () => G.lock && G.lock.type === 'ent' && G.lock.e.identified },
+  { msg: 'Now the shot. Keep the crosshair on the target and FIRE (F / Enter). The laser flies the weapon all the way in.', done: () => G.stats.hits > 0 },
+  { msg: 'Last thing — release flares with FLR (C). Against a real SAM, do it just before the missile reaches you.', done: () => G.flares < 6 },
+];
+function updateTraining() {
+  if (!G.training || G.over || G.trainStep >= TRAIN_STEPS.length) return;
+  const step = TRAIN_STEPS[G.trainStep];
+  if (!G.trainDone[G.trainStep]) { G.trainDone[G.trainStep] = true; msg(step.msg, '#9fd8ff', 'INSTRUCTOR'); }
+  if (step.done()) {
+    G.trainStep++; Snd.pid();
+    if (G.trainStep >= TRAIN_STEPS.length) msg('That\'s the syllabus. You\'re cleared for operations. Good hunting, Steppe Hawk.', '#b6ff9e', 'INSTRUCTOR');
+  }
+}
 
 // ============================================================ simulation
 function updateDrone(dt) {
@@ -805,6 +963,7 @@ function updateDrone(dt) {
 
 function update(dt) {
   G.t += dt;
+  updateClouds(dt);
   if (!G.demo && !G.over) G.timeLeft -= dt;
   // camera
   if (G.lock && G.lock.type === 'ent') {
@@ -842,6 +1001,7 @@ function update(dt) {
   G.flareT = Math.max(0, G.flareT - dt);
   G.static = Math.max(0, G.static - dt);
   if (G.helpT < 30) G.helpT += dt;
+  updateTraining();
   if (!G.over) {
     const req = G.objectives.filter(o => !o.optional);
     for (const o of G.objectives) if (!o.reported && o.done()) {
@@ -1045,6 +1205,7 @@ function smoke(x, y, z, size, vz, life = 6) {
 function explode(x, y, wp, byPlayer) {
   const big = wp.kill > 15;
   G.fx.push({ type: 'flash', x, y, t: 0, dur: big ? 0.8 : 0.55, r: wp.kill * 3.2 });
+  G.fx.push({ type: 'wave', x, y, t: 0, dur: big ? 0.95 : 0.6, r: wp.kill * (big ? 6.5 : 4) });
   for (let k = 0; k < (big ? 26 : 16); k++) {
     const a = rr(0, TAU), s = rr(8, big ? 45 : 28);
     G.parts.push({ type: 'debris', x, y, z: 1, vx: Math.cos(a) * s, vy: Math.sin(a) * s, vz: rr(10, big ? 40 : 26), life: rr(1, 2.4), max: 2.4 });
@@ -1188,6 +1349,7 @@ function render() {
   ctx.imageSmoothingEnabled = true;
   const gimg = V.pal === 0 ? G.Wd.gWhot : V.pal === 1 ? G.Wd.gBhot : G.Wd.gTv;
   ctx.drawImage(gimg, 0, 0, WORLD, WORLD);
+  drawClouds();
   drawRoads();
   // ground-level entities
   for (const v of G.vehs) if (visible(v.x, v.y)) drawVeh(v);
@@ -1206,6 +1368,7 @@ function render() {
   drawMissiles();
   // post
   baseTf();
+  drawBloom();
   if (G.whiteout > 0 && V.pal !== 2) { ctx.fillStyle = V.pal === 1 ? `rgba(0,0,0,${G.whiteout * 0.7})` : `rgba(255,255,255,${G.whiteout * 0.7})`; ctx.fillRect(0, 0, W, H); }
   else if (G.whiteout > 0) { ctx.fillStyle = `rgba(255,230,190,${G.whiteout * 0.5})`; ctx.fillRect(0, 0, W, H); }
   postFx(night);
@@ -1456,6 +1619,22 @@ function drawVeh(v) {
   }
   ctx.restore();
 }
+function drawClouds() {
+  if (!G.clouds.length) return;
+  // soft moving shadows cast on the ground; cooler (darker) on thermal, shade on TV
+  ctx.save();
+  ctx.globalCompositeOperation = V.pal === 1 ? 'lighten' : 'multiply';
+  for (const c of G.clouds) {
+    if (!visible(c.x, c.y, Math.max(c.rx, c.ry) + 200)) continue;
+    const g = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, 1);
+    const tone = V.pal === 1 ? [40, 40, 40] : [12, 16, 14];
+    g.addColorStop(0, `rgba(${tone[0]},${tone[1]},${tone[2]},${c.a})`);
+    g.addColorStop(1, `rgba(${tone[0]},${tone[1]},${tone[2]},0)`);
+    ctx.save(); ctx.translate(c.x, c.y); ctx.scale(c.rx, c.ry); ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(0, 0, 1, 0, TAU); ctx.fill(); ctx.restore();
+  }
+  ctx.restore();
+}
 function drawPower() {
   const Wd = G.Wd, night = V.L < 0.5, h = night ? 0.3 : 0.26;
   // wires: a two-segment catenary through the sagged mid-point
@@ -1497,7 +1676,14 @@ function drawFires() {
     ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill();
   }
   for (const f of G.fx) {
-    if (f.t < 0 || !visible(f.x, f.y, 100)) continue;
+    if (f.t < 0 || !visible(f.x, f.y, 160)) continue;
+    if (f.type === 'wave') {
+      const p = f.t / f.dur, rr2 = f.r * p, a = (1 - p) * 0.6;
+      const c = V.pal === 1 ? '20,20,20' : '255,255,255';
+      ctx.strokeStyle = `rgba(${c},${a})`; ctx.lineWidth = Math.max(V.min, f.r * 0.05 * (1 - p));
+      ctx.beginPath(); ctx.arc(f.x, f.y, Math.max(V.min, rr2), 0, TAU); ctx.stroke();
+      continue;
+    }
     const p = f.t / f.dur, r = f.r * (0.4 + p * 0.8), a = 1 - p;
     const k = (f.z || 2) * V.cot, x = f.x + V.fx * k, y = f.y + V.fy * k;
     const g = ctx.createRadialGradient(x, y, 0, x, y, r);
@@ -1534,6 +1720,37 @@ function drawMissiles() {
   }
 }
 
+// sensor bloom: thermal cameras bloom and halo around hot spots (fires, blasts, hot engines)
+function drawBloom() {
+  const bhot = V.pal === 1;
+  ctx.save();
+  ctx.globalCompositeOperation = bhot ? 'multiply' : 'lighter';
+  const halo = (sx2, sy2, rad, inten, warm) => {
+    if (sx2 < -rad || sy2 < -rad || sx2 > W + rad || sy2 > H + rad) return;
+    const g = ctx.createRadialGradient(sx2, sy2, 0, sx2, sy2, rad);
+    if (bhot) { g.addColorStop(0, `rgba(20,20,20,${inten})`); g.addColorStop(1, 'rgba(40,40,40,0)'); }
+    else if (V.pal === 2) { g.addColorStop(0, `rgba(255,${warm ? 210 : 245},${warm ? 150 : 220},${inten})`); g.addColorStop(1, 'rgba(255,200,140,0)'); }
+    else { g.addColorStop(0, `rgba(255,255,255,${inten})`); g.addColorStop(1, 'rgba(230,230,230,0)'); }
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(sx2, sy2, rad, 0, TAU); ctx.fill();
+  };
+  for (const f of G.fires) {
+    if (!visible(f.x, f.y, 40)) continue;
+    const a = clamp(f.life / 6, 0, 1), [x, y] = w2s(f.x, f.y, 1);
+    halo(x, y, Math.max(16, f.r * V.s * 2.2), 0.22 * a, true);
+  }
+  for (const f of G.fx) {
+    if (f.type !== 'flash' || f.t < 0 || !visible(f.x, f.y, 100)) continue;
+    const p = f.t / f.dur, [x, y] = w2s(f.x, f.y, f.z || 2);
+    halo(x, y, Math.max(24, f.r * V.s * 2.6), 0.4 * (1 - p), true);
+  }
+  // hot engines of live vehicles in close view
+  if (V.s > 1) for (const v of G.vehs) {
+    if (!v.alive || v.eng < 0.55 || v.parked || !visible(v.x, v.y, 10)) continue;
+    const [x, y] = w2s(v.x, v.y, 1); halo(x, y, 10 * V.s, 0.08, false);
+  }
+  ctx.restore();
+}
+
 // ------------------------------------------------------------ post-processing
 const grain = [];
 for (let i = 0; i < 4; i++) {
@@ -1558,6 +1775,7 @@ function postFx(night) {
     vignette.addColorStop(0, 'rgba(0,0,0,0)'); vignette.addColorStop(1, 'rgba(0,0,0,0.55)');
   }
   ctx.fillStyle = vignette; ctx.fillRect(0, 0, W, H);
+  drawWeather(night);
   if (G.static > 0) {
     const a = clamp(G.static / 1.2, 0, 1);
     ctx.save(); ctx.globalAlpha = a * 0.75;
@@ -1569,6 +1787,36 @@ function postFx(night) {
   if (G.over && !G.over.win && G.drone.hp <= 0) {
     ctx.drawImage(grain[(Math.random() * 4) | 0], 0, 0, W, H);
     txt('LINK LOST', W / 2, H / 2, 28, '#e8e8e8', 'center');
+  }
+}
+// screen-space weather: haze veils, rain streaks and drifting snow. The drift tracks the camera
+// motion so precipitation reads as falling through the sensor field.
+function drawWeather(night) {
+  const wx = G.weather;
+  if (wx === 'fog' || wx === 'overcast' || wx === 'dust') {
+    const veil = wx === 'dust' ? [120, 104, 78] : wx === 'fog' ? [150, 158, 162] : [120, 128, 134];
+    const a = wx === 'fog' ? 0.22 : wx === 'dust' ? 0.16 : 0.1;
+    ctx.fillStyle = `rgba(${veil[0]},${veil[1]},${veil[2]},${night ? a * 0.6 : a})`; ctx.fillRect(0, 0, W, H);
+  }
+  if (wx === 'rain') {
+    ctx.save(); ctx.strokeStyle = `rgba(180,200,220,${night ? 0.18 : 0.28})`; ctx.lineWidth = 1;
+    const n = Math.round(W * H / 9000), sk = V.s * 0.4, t = G.t * 900;
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) {
+      const x = ((i * 127.1 + t * 0.7) % (W + 40)) - 20, y = ((i * 311.7 + t) % (H + 40)) - 20;
+      ctx.moveTo(x, y); ctx.lineTo(x - 3, y + 14);
+    }
+    ctx.stroke(); ctx.restore();
+    ctx.fillStyle = 'rgba(90,110,130,0.08)'; ctx.fillRect(0, 0, W, H);
+  } else if (wx === 'snow') {
+    ctx.save(); ctx.fillStyle = `rgba(245,248,252,${night ? 0.5 : 0.75})`;
+    const n = Math.round(W * H / 14000), t = G.t * 50;
+    for (let i = 0; i < n; i++) {
+      const sway = Math.sin((t + i * 23) * 0.03) * 8;
+      const x = ((i * 97.3 + sway) % (W + 20)), y = ((i * 211.3 + t) % (H + 20));
+      ctx.beginPath(); ctx.arc(x, y, i % 5 === 0 ? 1.8 : 1.1, 0, TAU); ctx.fill();
+    }
+    ctx.restore();
   }
 }
 
@@ -1810,7 +2058,20 @@ function zoom(d) {
   if (!G) return;
   G.fovFine = 1;
   G.fovI = clamp(G.fovI + d, 0, ZOOMS.length - 1); Snd.click();
+  syncZoomSlider();
 }
+// continuous zoom helpers shared by the pinch gesture and the zoom slider
+function applyFov(target) {
+  target = clamp(target, ZOOMS[ZOOMS.length - 1], ZOOMS[0]);
+  let bi = 0; for (let i = 0; i < ZOOMS.length; i++) if (Math.abs(Math.log(ZOOMS[i] / target)) < Math.abs(Math.log(ZOOMS[bi] / target))) bi = i;
+  G.fovI = bi; G.fovFine = target / ZOOMS[bi];
+}
+function sliderToFov(v) { return Math.exp(lerp(Math.log(ZOOMS[0]), Math.log(ZOOMS[ZOOMS.length - 1]), v)); }
+function fovToSlider(fov) { return clamp((Math.log(fov) - Math.log(ZOOMS[0])) / (Math.log(ZOOMS[ZOOMS.length - 1]) - Math.log(ZOOMS[0])), 0, 1); }
+let zoomDragging = false;
+function syncZoomSlider() { if (zoomDragging) return; const el = $zoom(); if (el && G) el.value = Math.round(fovToSlider(ZOOMS[G.fovI] * (G.fovFine || 1)) * 1000); }
+function $zoom() { return document.getElementById('zoomSlider'); }
+function showZoom(on) { const c = document.getElementById('zoomCtl'); if (c) c.classList.toggle('hidden', !on); if (on) syncZoomSlider(); }
 function lockAt(sx, sy) {
   const [wx, wy] = s2w(sx, sy);
   let best = null, bd = 26 * UI * (isTouch ? 1.6 : 1);
@@ -1867,9 +2128,7 @@ cv.addEventListener('pointermove', e => {
   if (pinch && ptrs.size >= 2) {
     const [a, b] = [...ptrs.values()], d = hyp(a.x - b.x, a.y - b.y);
     const target = clamp(pinch.fov * pinch.d / Math.max(20, d), ZOOMS[ZOOMS.length - 1], ZOOMS[0]);
-    // choose nearest zoom step plus fine factor for continuous pinch
-    let bi = 0; for (let i = 0; i < ZOOMS.length; i++) if (Math.abs(Math.log(ZOOMS[i] / target)) < Math.abs(Math.log(ZOOMS[bi] / target))) bi = i;
-    G.fovI = bi; G.fovFine = target / ZOOMS[bi];
+    applyFov(target); syncZoomSlider();
     return;
   }
   if (!downInfo) return;
@@ -1927,6 +2186,16 @@ for (const b of document.querySelectorAll('#touch [data-act]')) {
     if (navigator.vibrate && b.dataset.act === 'fire') navigator.vibrate(30);
   });
 }
+{
+  const zs = document.getElementById('zoomSlider');
+  if (zs) {
+    const apply = () => { if (G && state === 'play') { applyFov(sliderToFov(zs.value / 1000)); } };
+    zs.addEventListener('input', apply);
+    zs.addEventListener('pointerdown', e => { zoomDragging = true; Snd.init(); e.stopPropagation(); });
+    const up = () => { zoomDragging = false; };
+    zs.addEventListener('pointerup', up); zs.addEventListener('pointercancel', up); zs.addEventListener('change', up);
+  }
+}
 
 // ============================================================ menus / flow
 const $ = id => document.getElementById(id);
@@ -1948,6 +2217,7 @@ function initTabs() {
 function suspendUAV() {
   suspended = true; state = 'menu';
   for (const id of ['menu', 'brief', 'pause', 'end', 'touch']) show(id, false);
+  showZoom(false);
   cv.style.display = 'none';
 }
 function resumeUAV() {
@@ -1986,6 +2256,7 @@ function startMission(i) {
   state = 'play';
   for (const id of ['menu', 'brief', 'pause', 'end']) show(id, false);
   show('touch', isTouch);
+  showZoom(true);
   if (isTouch && !isNative) {
     const el = document.documentElement;
     try {
@@ -1994,11 +2265,12 @@ function startMission(i) {
     } catch (e) { /* fullscreen not available */ }
   }
 }
-function pauseGame() { if (state !== 'play') return; state = 'pause'; show('pause', true); }
-function resumeGame() { state = 'play'; show('pause', false); last = performance.now(); }
+function pauseGame() { if (state !== 'play') return; state = 'pause'; show('pause', true); showZoom(false); }
+function resumeGame() { state = 'play'; show('pause', false); showZoom(true); last = performance.now(); }
 function toMenu() {
   state = 'menu';
   for (const id of ['brief', 'pause', 'end', 'touch']) show(id, false);
+  showZoom(false);
   buildMenu(); show('menu', true);
   newGame(0, true); G.demoAng = 0; G.fovI = 1;
 }
@@ -2006,6 +2278,7 @@ function endMission() {
   if (state !== 'play') return;
   state = 'end';
   show('touch', false);
+  showZoom(false);
   const s = G.stats, win = G.over.win, M = G.M;
   const acc = s.shots ? s.hits / s.shots : 0;
   const objDone = G.objectives.filter(o => o.done()).length;

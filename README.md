@@ -12,12 +12,16 @@ The UAV mode is plain HTML5 canvas and needs nothing. The FPV modes use [three.j
 
 | # | Mission | Setting | Objective |
 |---|---------|---------|-----------|
-| 1 | **Steppe Shield** | Summer, day | Destroy a SAM battery: its search radar and two launchers. You'll have to dodge its missiles with flares. |
-| 2 | **Iron River** | Winter, day | Stop an armoured column (tanks, IFVs and a fuel tanker) before it reaches the river bridge. Evacuating civilians share the road. |
-| 3 | **Night Harvest** | Summer, night | Counter-battery fire: find three howitzers by their muzzle flashes. A hidden mobile SAM wakes up once you strike. |
-| 4 | **Command Post** | Summer, dusk | Follow an enemy commander's vehicle through an occupied village and strike it on open ground. |
+| 1 | **Flight Training** | Summer, day | A guided tutorial on a safe range: slew the camera, zoom, lock a track, get positive ID and take a laser-guided shot. Nothing shoots back. |
+| 2 | **Steppe Shield** | Summer, day | Destroy a SAM battery: its search radar and two launchers. You'll have to dodge its missiles with flares. |
+| 3 | **Iron River** | Winter, day | Stop an armoured column (tanks, IFVs and a fuel tanker) before it reaches the river bridge. Evacuating civilians share the road. |
+| 4 | **Night Harvest** | Summer, night | Counter-battery fire: find three howitzers by their muzzle flashes. A hidden mobile SAM wakes up once you strike. |
+| 5 | **Command Post** | Summer, dusk | Follow an enemy commander's vehicle through an occupied village and strike it on open ground. |
+| 6 | **Bridge Denial** | Summer, rain | Destroy an engineer team laying a pontoon crossing by the bridge, under a short-range SAM and reduced visibility. |
+| 7 | **Night Convoy** | Summer, night | Interdict a resupply convoy on the highway before it clears the sector. A mobile SAM wakes on your first strike. |
+| 8 | **Blind Eye** | Summer, fog | Hunt an electronic-warfare jammer and its launcher in thick fog that cuts your sensor range. |
 
-The world is generated procedurally for each mission. It includes wheat, sunflower and black-soil fields, tree windbreaks, a village with gabled houses and Soviet-era apartment blocks, a market and a church, collective farms, a river with a bridge, and civilian traffic, pedestrians and tractors.
+The world is generated procedurally for each mission. It includes wheat, sunflower and black-soil fields, tree windbreaks, a village with gabled houses and Soviet-era apartment blocks, a market and a church, collective farms, a river with a bridge, power lines, and civilian traffic, pedestrians and tractors. Each mission has its own weather — clear, cloud, rain, snow or fog — with drifting cloud shadows, and hot targets bloom on the thermal sensor.
 
 ## How it plays
 

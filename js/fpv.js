@@ -142,6 +142,49 @@ function makePrismGeometry() {
   return g;
 }
 
+// Procedural textures (generated per sortie, freed on exit). Neutral/light so per-instance
+// InstancedMesh colours still tint them. Give the world concrete, tiles, ground relief and ripples.
+function makeTextures() {
+  const cv2 = (s) => { const c = document.createElement('canvas'); c.width = c.height = s; return c; };
+  // building facade: light panels with window rows
+  const wc = cv2(128), wg = wc.getContext('2d');
+  wg.fillStyle = '#d9d9d4'; wg.fillRect(0, 0, 128, 128);
+  for (let i = 0; i < 1200; i++) { const v = 200 + Math.random() * 50; wg.fillStyle = `rgba(${v},${v},${v - 6},0.07)`; wg.fillRect(Math.random() * 128, Math.random() * 128, 2, 2); }
+  for (let r = 0; r < 5; r++) for (let c = 0; c < 4; c++) {
+    const x = 12 + c * 28, y = 10 + r * 23, ww = 18, wh = 14;
+    wg.fillStyle = '#394450'; wg.fillRect(x, y, ww, wh);
+    wg.fillStyle = 'rgba(130,160,180,0.45)'; wg.fillRect(x, y, ww, wh * 0.42);
+    wg.strokeStyle = 'rgba(70,70,70,0.4)'; wg.lineWidth = 1; wg.strokeRect(x + 0.5, y + 0.5, ww, wh);
+  }
+  // roof: corrugated stripes
+  const rc = cv2(64), rg = rc.getContext('2d');
+  rg.fillStyle = '#d7d3cd'; rg.fillRect(0, 0, 64, 64);
+  for (let y = 0; y < 64; y += 5) { rg.fillStyle = 'rgba(80,72,64,0.22)'; rg.fillRect(0, y, 64, 2); }
+  // ground micro-relief + water ripples (bump maps)
+  const gb = cv2(256), gbg = gb.getContext('2d'), gid = gbg.createImageData(256, 256);
+  for (let i = 0; i < gid.data.length; i += 4) { const v = 110 + Math.random() * 145; gid.data[i] = gid.data[i + 1] = gid.data[i + 2] = v; gid.data[i + 3] = 255; }
+  gbg.putImageData(gid, 0, 0);
+  const wb = cv2(128), wbg = wb.getContext('2d'), wid = wbg.createImageData(128, 128);
+  for (let y = 0; y < 128; y++) for (let x = 0; x < 128; x++) {
+    const v = 128 + 55 * Math.sin(x * 0.3 + y * 0.16) + 40 * Math.sin(x * 0.12 - y * 0.24), o = (y * 128 + x) * 4;
+    wid.data[o] = wid.data[o + 1] = wid.data[o + 2] = v; wid.data[o + 3] = 255;
+  }
+  wbg.putImageData(wid, 0, 0);
+  const T = (c, srgb) => { const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 4; if (srgb) t.colorSpace = THREE.SRGBColorSpace; return t; };
+  return { wall: T(wc, true), roof: T(rc, true), gbump: T(gb), wbump: T(wb) };
+}
+function addSkyDome(scene, topHex, botHex) {
+  const mat = new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite: false, fog: false,
+    // raw-shader output is written straight to the framebuffer, so feed sRGB-encoded colours
+    uniforms: { top: { value: new THREE.Color(topHex).convertLinearToSRGB() }, bot: { value: new THREE.Color(botHex).convertLinearToSRGB() }, off: { value: 260 }, exp: { value: 0.65 } },
+    vertexShader: 'varying vec3 vW; void main(){ vW=(modelMatrix*vec4(position,1.0)).xyz; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);} ',
+    fragmentShader: 'varying vec3 vW; uniform vec3 top; uniform vec3 bot; uniform float off; uniform float exp; void main(){ float h=normalize(vW+vec3(0.0,off,0.0)).y; gl_FragColor=vec4(mix(bot,top,pow(max(h,0.0),exp)),1.0);} ',
+  });
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(3200, 24, 12), mat);
+  dome.frustumCulled = false; dome.renderOrder = -1; scene.add(dome); return dome;
+}
+
 function buildScene(cfg) {
   const setT = API.util.setSeed; setT(cfg.seed);
   const Wd = API.genWorld({ seed: cfg.seed, winter: !!cfg.winter, light: cfg.light });
@@ -156,35 +199,50 @@ function buildScene(cfg) {
   scene.background = sky;
   const fogFar = over ? 1700 : night ? 1400 : 2600;
   scene.fog = new THREE.Fog(sky.clone().lerp(new THREE.Color(0xffffff), night ? 0 : 0.15), 120, fogFar);
+  const tex = makeTextures();
+  // gradient sky dome for a realistic horizon
+  const horizon = sky.clone().lerp(new THREE.Color(0xffffff), night ? 0.08 : 0.4);
+  const skyDome = addSkyDome(scene, sky.clone().multiplyScalar(night ? 1 : 1.1).getHex(), horizon.getHex());
+
+  // quality tier: shadows on desktop and capable phones only (and droppable at runtime if slow)
+  const strong = !API.isTouch || ((navigator.hardwareConcurrency || 4) >= 6 && (navigator.deviceMemory || 4) >= 4);
 
   // lighting
-  const sun = new THREE.DirectionalLight(night ? 0x6a86b8 : dusk ? 0xffb066 : 0xfff2d8, night ? 0.25 : dusk ? 0.8 : 1.05);
-  sun.position.set(0.55, dusk ? 0.35 : 0.9, 0.3).multiplyScalar(1000);
-  scene.add(sun);
-  scene.add(new THREE.HemisphereLight(sky.getHex(), cfg.winter ? 0xdfe6ea : 0x33402c, night ? 0.35 : over ? 0.8 : 0.6));
+  const sun = new THREE.DirectionalLight(night ? 0x6a86b8 : dusk ? 0xffb066 : 0xfff2d8, night ? 0.25 : dusk ? 0.8 : 1.1);
+  const sunDir = new THREE.Vector3(0.55, dusk ? 0.42 : 0.92, 0.32).normalize();
+  sun.position.copy(sunDir).multiplyScalar(700);
+  scene.add(sun); scene.add(sun.target);
+  scene.add(new THREE.HemisphereLight(sky.getHex(), cfg.winter ? 0xdfe6ea : 0x33402c, night ? 0.35 : over ? 0.85 : 0.65));
   scene.add(new THREE.AmbientLight(0xffffff, night ? 0.12 : 0.18));
+  if (strong) {
+    sun.castShadow = true;
+    const ms = API.isTouch ? 1024 : 2048; sun.shadow.mapSize.set(ms, ms);
+    const sc = sun.shadow.camera; sc.left = -280; sc.right = 280; sc.top = 280; sc.bottom = -280; sc.near = 150; sc.far = 1500;
+    sun.shadow.bias = -0.0005; sun.shadow.normalBias = 0.6;
+  }
 
-  // ground (reuse the daytime colour canvas as a texture)
+  // ground (daytime colour canvas + micro-relief bump)
   const gtex = new THREE.CanvasTexture(Wd.gDay);
-  gtex.colorSpace = THREE.SRGBColorSpace; gtex.anisotropy = 4;
+  gtex.colorSpace = THREE.SRGBColorSpace; gtex.anisotropy = 8;
+  tex.gbump.repeat.set(90, 90);
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(WORLD, WORLD),
-    new THREE.MeshLambertMaterial({ map: gtex }));
-  ground.rotation.x = -Math.PI / 2; scene.add(ground);
+    new THREE.MeshStandardMaterial({ map: gtex, bumpMap: tex.gbump, bumpScale: 0.35, roughness: 0.96, metalness: 0 }));
+  ground.rotation.x = -Math.PI / 2; ground.receiveShadow = strong; scene.add(ground);
 
   // roads: flat ribbons merged into one geometry
   addRoads(scene, Wd, night);
   // river ribbon
-  addRiver(scene, Wd, night, cfg);
+  const water = addRiver(scene, Wd, night, cfg, tex);
 
   // buildings: box bodies (instanced) + gable roof prisms (instanced)
   const boxGeo = new THREE.BoxGeometry(1, 1, 1);
-  const bodyMat = new THREE.MeshLambertMaterial();
+  const bodyMat = new THREE.MeshStandardMaterial({ map: tex.wall, roughness: 0.88, metalness: 0.02 });
   const bodies = new THREE.InstancedMesh(boxGeo, bodyMat, Wd.blds.length);
-  bodies.frustumCulled = false;
+  bodies.frustumCulled = false; bodies.castShadow = strong; bodies.receiveShadow = strong;
   const gabled = Wd.blds.filter(b => b.gable);
-  const roofMat = new THREE.MeshLambertMaterial();
+  const roofMat = new THREE.MeshStandardMaterial({ map: tex.roof, roughness: 0.82, metalness: 0.03 });
   const roofs = new THREE.InstancedMesh(makePrismGeometry(), roofMat, Math.max(1, gabled.length));
-  roofs.frustumCulled = false;
+  roofs.frustumCulled = false; roofs.castShadow = strong;
   const m4 = new THREE.Matrix4(), col = new THREE.Color();
   const collBlds = [];
   Wd.blds.forEach((b, i) => {
@@ -241,14 +299,15 @@ function buildScene(cfg) {
     });
     fol.instanceMatrix.needsUpdate = true; if (fol.instanceColor) fol.instanceColor.needsUpdate = true;
     trunk.instanceMatrix.needsUpdate = true;
+    fol.castShadow = strong;
     scene.add(fol); scene.add(trunk);
   }
 
   // bridge deck over the river on the main road (a solid obstacle; the gap is underneath it)
   const bxw = Wd.riverX(2000), deckH = 6.2;
   const bridge = new THREE.Mesh(new THREE.BoxGeometry(80, 1.4, 15),
-    new THREE.MeshLambertMaterial({ color: 0x8a8a86 }));
-  bridge.position.set(sx(bxw), deckH, sz(2000)); scene.add(bridge);
+    new THREE.MeshStandardMaterial({ color: 0x8a8a86, roughness: 0.9 }));
+  bridge.position.set(sx(bxw), deckH, sz(2000)); bridge.castShadow = strong; bridge.receiveShadow = strong; scene.add(bridge);
   for (const s of [-1, 1]) {
     const pier = new THREE.Mesh(new THREE.BoxGeometry(3, deckH, 13), new THREE.MeshLambertMaterial({ color: 0x70706e }));
     pier.position.set(sx(bxw) + s * 24, deckH / 2, sz(2000)); scene.add(pier);
@@ -261,7 +320,7 @@ function buildScene(cfg) {
   // weather particles
   const weather = addWeather(scene, cfg);
 
-  return { scene, Wd, cfg, night, dusk, over, collBlds, pylons, wires, sun, deckH, bxw, gtex };
+  return { scene, Wd, cfg, night, dusk, over, collBlds, pylons, wires, sun, sunDir, deckH, bxw, gtex, water, skyDome, shadows: strong, tex };
 }
 
 function addRoads(scene, Wd, night) {
@@ -285,18 +344,25 @@ function addRoads(scene, Wd, night) {
   mesh.frustumCulled = false; scene.add(mesh);
 }
 
-function addRiver(scene, Wd, night, cfg) {
-  const pos = [], step = 40;
+function addRiver(scene, Wd, night, cfg, tex) {
+  const pos = [], uv = [], step = 40;
   for (let y = 0; y <= WORLD; y += step) {
     const rx = Wd.riverX(y), x0 = sx(rx - 24), x1 = sx(rx + 24), z = sz(y), z2 = sz(Math.min(WORLD, y + step)), rx2 = Wd.riverX(Math.min(WORLD, y + step));
-    const x0b = sx(rx2 - 24), x1b = sx(rx2 + 24);
+    const x0b = sx(rx2 - 24), x1b = sx(rx2 + 24), v = y / 60, v2 = (y + step) / 60;
     pos.push(x0, -0.8, z, x1, -0.8, z, x1b, -0.8, z2, x0, -0.8, z, x1b, -0.8, z2, x0b, -0.8, z2);
+    uv.push(0, v, 1, v, 1, v2, 0, v, 1, v2, 0, v2);
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  const c = cfg.winter ? 0xcad6de : night ? 0x14222e : 0x33586a;
-  const mesh = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ color: c }));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.computeVertexNormals();
+  const c = cfg.winter ? 0xcad6de : night ? 0x18303e : 0x35617a;
+  if (tex) tex.wbump.repeat.set(3, 40);
+  const mat = new THREE.MeshStandardMaterial({ color: c, roughness: cfg.winter ? 0.8 : 0.28, metalness: cfg.winter ? 0.0 : 0.35,
+    bumpMap: tex ? tex.wbump : null, bumpScale: 0.25, emissive: new THREE.Color(c).multiplyScalar(0.12) });
+  const mesh = new THREE.Mesh(g, mat);
   mesh.frustumCulled = false; scene.add(mesh);
+  return mesh;
 }
 
 function addPower(scene, Wd, night) {
@@ -378,6 +444,7 @@ function addTargets(G) {
   };
   const addVeh = (type, worldX, worldY, hd, hostile, opt = {}) => {
     const mesh = mkMesh(type, hostile); mesh.position.set(sx(worldX), 0, sz(worldY)); mesh.rotation.y = -hd;
+    if (G.shadows) mesh.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
     G.scene.add(mesh);
     const T = API.VT[type] || API.VT.car;
     const t = Object.assign({ mesh, type, x: sx(worldX), z: sz(worldY), hd, hostile, alive: true, r: Math.max(T.L, T.W) / 2, occ: T.occ, fuel: type === 'fuel', hvt: false }, opt);
@@ -526,7 +593,7 @@ function startPoint(G) {
     const tx = t ? t.x : 0, tz = t ? t.z : 0;
     return { x: tx + 300, y: 55, z: tz + 300, yaw: Math.atan2(-(tx - (tx + 300)), -(tz - (tz + 300))) };
   }
-  return { x: sx(2000), y: 12, z: sz(2000) + 200, yaw: Math.PI };
+  return { x: sx(2000), y: 20, z: sz(2000) + 200, yaw: Math.PI };
 }
 
 let QX, QY, QZ, UP;
@@ -534,29 +601,39 @@ function initConsts() { QX = new THREE.Vector3(1, 0, 0); QY = new THREE.Vector3(
 function flyQuad(G, dt) {
   const Q = G.quad, cfg = G.cfg, inp = G.input;
   if (!Q.alive) { Q.respawnT -= dt; if (Q.respawnT <= 0) respawn(G); return; }
-  const boost = inp.boost ? 1.75 : 1;
-  const maxTilt = 40 * DEG;
+  const boost = inp.boost ? 1.6 : 1;
+  const up = UP.clone().applyQuaternion(Q.q);
   if (Q.mode === 'level') {
-    G.yaw = (G.yaw || 0) + inp.yaw * 150 * DEG * dt;
+    // forgiving camera-drone feel: gentle self-levelling, altitude hold and auto-brake
+    const maxTilt = 30 * DEG;
+    G.yaw = (G.yaw || 0) + inp.yaw * 100 * DEG * dt;
     const qYaw = new THREE.Quaternion().setFromAxisAngle(QY, G.yaw);
     const qTilt = new THREE.Quaternion().setFromEuler(new THREE.Euler(inp.pitch * maxTilt, 0, -inp.roll * maxTilt, 'XYZ'));
-    const target = qYaw.multiply(qTilt);
-    Q.q.slerp(target, 1 - Math.exp(-9 * dt));
-  } else { // acro: rate control
-    const dq = new THREE.Quaternion().setFromEuler(new THREE.Euler(inp.pitch * 440 * DEG * dt, inp.yaw * 240 * DEG * dt, -inp.roll * 440 * DEG * dt, 'XYZ'));
+    Q.q.slerp(qYaw.multiply(qTilt), 1 - Math.exp(-10 * dt));
+    // vertical: left stick commands a climb rate; centred = hold altitude (auto-throttle)
+    const vyTarget = inp.climb * 9 * boost;
+    let tMag = (9.8 + (vyTarget - Q.v.y) * 3.2) / Math.max(0.4, up.y);
+    tMag = clamp(tMag, 0, 26 * boost);
+    Q.throttle = clamp(tMag / 26, 0, 1);
+    const accel = up.clone().multiplyScalar(tMag); accel.y -= 9.8;
+    Q.v.addScaledVector(accel, dt);
+    // auto-brake horizontal drift when the right stick is centred (position-hold feel)
+    const brake = (Math.abs(inp.pitch) + Math.abs(inp.roll)) < 0.08 ? 2.4 : 0.4;
+    Q.v.x -= Q.v.x * brake * dt; Q.v.z -= Q.v.z * brake * dt;
+    const spd = Q.v.length();
+    Q.v.addScaledVector(Q.v, -(0.32 + 0.012 * spd) * dt);
+  } else {
+    // acro: full rate control for flips and loops; direct throttle
+    const dq = new THREE.Quaternion().setFromEuler(new THREE.Euler(inp.pitch * 420 * DEG * dt, inp.yaw * 240 * DEG * dt, -inp.roll * 420 * DEG * dt, 'XYZ'));
     Q.q.multiply(dq); Q.q.normalize();
+    Q.throttle = lerp(Q.throttle, clamp((inp.climb + 1) / 2, 0, 1), 1 - Math.exp(-8 * dt));
+    const accel = up.clone().multiplyScalar(Q.throttle * 28 * boost); accel.y -= 9.8;
+    Q.v.addScaledVector(accel, dt);
+    const spd = Q.v.length();
+    Q.v.addScaledVector(Q.v, -(0.5 + 0.018 * spd) * dt);
   }
-  // forces
-  const thr = clamp(Q.throttle + (inp.thr) * 0.9, 0, 1); // inp.thr is a target offset
-  Q.throttle = lerp(Q.throttle, clamp((inp.throttle), 0, 1), 1 - Math.exp(-6 * dt));
-  const up = UP.clone().applyQuaternion(Q.q);
-  const accel = up.multiplyScalar(Q.throttle * 26 * boost);
-  accel.y -= 9.8;
-  Q.v.addScaledVector(accel, dt);
-  // drag
-  const spd = Q.v.length();
-  Q.v.addScaledVector(Q.v, -(0.55 + 0.02 * spd) * dt);
   Q.p.addScaledVector(Q.v, dt);
+  const spd = Q.v.length();
   // trick accounting via quaternion delta -> body rates
   const dQ = Q.q.clone().multiply(Q.prevQ.clone().invert());
   const omega = new THREE.Euler().setFromQuaternion(dQ, 'XYZ');
@@ -601,8 +678,9 @@ function collide(G, dt) {
   const gh = groundY(G, p.x, p.z);
   if (p.y < gh + 0.5) {
     const tilt = Math.acos(clamp(UP.clone().applyQuaternion(Q.q).y, -1, 1));
-    if (Q.v.y < -6 || tilt > 42 * DEG || Q.v.length() > 11) { crash(G, 'ground'); return; }
-    p.y = gh + 0.5; Q.v.y = Math.max(Q.v.y, 0) * 0.3; Q.v.x *= 0.9; Q.v.z *= 0.9; // skim
+    // forgiving: only a genuinely hard, steep or fast impact crashes; otherwise skim the ground
+    if (Q.v.y < -11 || tilt > 62 * DEG || Q.v.length() > 19) { crash(G, 'ground'); return; }
+    p.y = gh + 0.5; Q.v.y = Math.max(Q.v.y, 0) * 0.3; Q.v.x *= 0.92; Q.v.z *= 0.92;
   }
   // buildings / bridge
   for (const b of G.collBlds) {
@@ -910,10 +988,11 @@ function readInput(G, dt) {
   const ly = G.stickL.active ? G.stickL.y : (gLy || ky);
   const rx = G.stickR.active ? G.stickR.x : (gRx || kr);
   const ry = G.stickR.active ? G.stickR.y : (gRy || kp);
-  inp.yaw = lx; inp.roll = rx; inp.pitch = -ry; // stick up = nose down => pitch forward
-  // throttle: left-stick Y maps 0..1 (centre ≈ hover); keyboard W/S nudges
-  const tTarget = G.stickL.active ? (G.stickL.y * 0.5 + 0.5) : clamp(inp.throttle + ly * 0.9 * dt, 0, 1);
-  inp.throttle = tTarget;
+  // a little expo for fine control around centre
+  const expo = v => clamp(v, -1, 1) * (0.4 + 0.6 * v * v);
+  inp.yaw = expo(lx); inp.roll = expo(rx); inp.pitch = expo(-ry); // stick up = nose down => pitch forward
+  // left-stick Y / W-S is a climb command: push to ascend, centre to hold altitude (self-level)
+  inp.climb = clamp(ly, -1, 1);
 }
 function dead(v) { return Math.abs(v) < 0.12 ? 0 : v; }
 function actionPrimary(G) {
@@ -926,7 +1005,7 @@ function toggleMode(G) { G.quad.mode = G.quad.mode === 'level' ? 'acro' : 'level
 function bindStick(el, stick) {
   const knob = el.querySelector('.knob');
   let id = null;
-  const rad = 56;
+  const rad = 66;
   const set = (cx, cy, e) => {
     const r = el.getBoundingClientRect(), dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);
     const d = Math.hypot(dx, dy), cl = Math.min(d, rad), nx = d ? dx / d * cl : 0, ny = d ? dy / d * cl : 0;
@@ -994,6 +1073,8 @@ async function start(cfg) {
   G.civHit = false; G.targetsTotal = 0;
   G.renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('fpv'), antialias: true, powerPreference: 'high-performance' });
   G.renderer.setClearColor(G.scene.background);
+  G.renderer.shadowMap.enabled = G.shadows;
+  G.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   G.camera = new THREE.PerspectiveCamera(92, 1, 0.3, 4000);
   G.cam = { spd: 0 };
   initFx(G);
@@ -1068,6 +1149,9 @@ function loop(now) {
   }
   // gap markers spin
   if (G.gaps) for (const gp of G.gaps) if (gp.marker) gp.marker.rotation.z += dt;
+  // shadow sun follows the quad so the shadow map stays tight; water ripples drift
+  if (G.shadows) { G.sun.position.copy(G.quad.p).addScaledVector(G.sunDir, 600); G.sun.target.position.copy(G.quad.p); G.sun.target.updateMatrixWorld(); }
+  if (G.water && G.water.material.bumpMap) { G.water.material.bumpMap.offset.y += dt * 0.05; G.water.material.bumpMap.offset.x += dt * 0.012; }
   // camera follow (FPV, from the quad with a slight up-tilt)
   const Q = G.quad;
   G.camera.position.copy(Q.p);
@@ -1086,7 +1170,9 @@ function loop(now) {
   G.frameMs = (G.frameMs || ms) * 0.9 + ms * 0.1;
   if (G.t - (G.lastAdapt || 0) > 2) {
     G.lastAdapt = G.t;
-    if (G.frameMs > 20 && G.renderScale > 0.6) { G.renderScale -= 0.15; layout(G); }
+    // first drop resolution; if still heavy and shadows are on, turn them off as a last resort
+    if (G.frameMs > 22 && G.renderScale > 0.6) { G.renderScale -= 0.15; layout(G); }
+    else if (G.frameMs > 26 && G.shadows) { G.shadows = false; G.renderer.shadowMap.enabled = false; G.sun.castShadow = false; }
     else if (G.frameMs < 9 && G.renderScale < 1) { G.renderScale = Math.min(1, G.renderScale + 0.15); layout(G); }
   }
   drawHud(G);

@@ -87,6 +87,23 @@ canvas#game { position: fixed; inset: 0; width: 100vw; height: 100vh; display: b
 .tb.fire { background: rgba(140, 24, 18, 0.55); border-color: rgba(255,120,100,0.7); width: 84px; height: 72px; font-size: 18px; }
 .tb.warn { border-color: rgba(255, 210, 90, 0.6); color: #ffe7a6; }
 .tb.on, .tb:active { background: rgba(120, 255, 140, 0.35); }
+.tcap { font-size: 10px; letter-spacing: 0.18em; color: #7fb58a; text-align: center; width: 100%; }
+
+/* continuous zoom slider (UAV) */
+#zoomCtl { position: fixed; z-index: 6; right: max(8px, env(safe-area-inset-right)); top: 50%; transform: translateY(-50%);
+  display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: none; }
+#zoomCtl.show { display: flex; }
+#zoomCtl .zlbl { font-size: 9px; letter-spacing: 0.1em; color: #7fb58a; writing-mode: vertical-rl; }
+#zoomSlider {
+  -webkit-appearance: none; appearance: none; width: 10px; height: clamp(120px, 34vh, 260px);
+  writing-mode: vertical-lr; direction: rtl; background: rgba(10,30,16,0.5); border: 1px solid rgba(160,255,170,0.4);
+  border-radius: 8px; pointer-events: auto; touch-action: none;
+}
+#zoomSlider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 26px; height: 26px; border-radius: 50%;
+  background: rgba(120,255,140,0.55); border: 1px solid rgba(200,255,200,0.8); cursor: pointer; }
+#zoomSlider::-moz-range-thumb { width: 26px; height: 26px; border-radius: 50%; background: rgba(120,255,140,0.55); border: 1px solid rgba(200,255,200,0.8); cursor: pointer; }
+/* keep the slider clear of the floating fire cluster on short screens */
+@media (max-height: 520px) { #zoomCtl { top: 38%; } #zoomSlider { height: clamp(90px, 28vh, 180px); } }
 
 
 /* ---- 3D FPV mode ---- */
@@ -98,12 +115,12 @@ canvas#fpvHud { position: absolute; inset: 0; width: 100%; height: 100%; display
 
 #fpvTouch { position: fixed; inset: 0; z-index: 6; pointer-events: none; display: none; }
 #fpvTouch.on { display: block; }
-.stick { position: absolute; bottom: max(18px, env(safe-area-inset-bottom)); width: 150px; height: 150px; border-radius: 50%;
-  border: 1px solid rgba(160,255,170,0.3); background: rgba(10,30,16,0.25); pointer-events: auto; touch-action: none; }
+.stick { position: absolute; bottom: max(18px, env(safe-area-inset-bottom)); width: 172px; height: 172px; border-radius: 50%;
+  border: 1px solid rgba(160,255,170,0.35); background: rgba(10,30,16,0.3); pointer-events: auto; touch-action: none; }
 .stick.l { left: max(16px, env(safe-area-inset-left)); }
 .stick.r { right: max(16px, env(safe-area-inset-right)); }
-.stick .knob { position: absolute; left: 50%; top: 50%; width: 58px; height: 58px; margin: -29px 0 0 -29px; border-radius: 50%;
-  background: rgba(120,255,140,0.28); border: 1px solid rgba(160,255,170,0.6); }
+.stick .knob { position: absolute; left: 50%; top: 50%; width: 66px; height: 66px; margin: -33px 0 0 -33px; border-radius: 50%;
+  background: rgba(120,255,140,0.3); border: 1px solid rgba(160,255,170,0.65); }
 .stick .lbl { position: absolute; left: 0; right: 0; bottom: -18px; text-align: center; font-size: 10px; letter-spacing: 0.12em; color: #7fb58a; }
 .fpvbtns { position: absolute; right: max(12px, env(safe-area-inset-right)); top: 50%; transform: translateY(-50%);
   display: flex; flex-direction: column; gap: 8px; pointer-events: none; }

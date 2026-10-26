@@ -25,19 +25,27 @@
     <button data-act="help" class="tb small">?</button>
   </div>
   <div class="tgroup right">
+    <div class="trow"><span class="tcap">ZOOM</span></div>
     <div class="trow">
-      <button data-act="zoomout" class="tb">−</button>
-      <button data-act="zoomin" class="tb">+</button>
+      <button data-act="zoomout" class="tb" aria-label="Zoom out">−</button>
+      <button data-act="zoomin" class="tb" aria-label="Zoom in">+</button>
     </div>
     <div class="trow">
-      <button data-act="weapon" class="tb">WPN</button>
-      <button data-act="flare" class="tb warn">FLR</button>
+      <button data-act="weapon" class="tb" aria-label="Switch weapon">WPN</button>
+      <button data-act="flare" class="tb warn" aria-label="Release flares">FLR</button>
     </div>
     <div class="trow">
-      <button data-act="lock" class="tb">TRK</button>
-      <button data-act="fire" class="tb fire">FIRE</button>
+      <button data-act="lock" class="tb" aria-label="Lock track">TRK</button>
+      <button data-act="fire" class="tb fire" aria-label="Fire">FIRE</button>
     </div>
   </div>
+</div>
+
+<!-- zoom slider: continuous sensor zoom, shown while flying the UAV -->
+<div id="zoomCtl" class="hidden">
+  <div class="zlbl">WIDE</div>
+  <input id="zoomSlider" type="range" min="0" max="1000" value="700" aria-label="Sensor zoom">
+  <div class="zlbl">NARROW</div>
 </div>
 
 <div id="menu" class="overlay">
