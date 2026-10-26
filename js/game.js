@@ -545,7 +545,8 @@ function newGame(mi, demo = false) {
     M, mi, demo, Wd, t: 0, timeLeft: M.timeLimit, peds: [], vehs: [], missiles: [], threats: [], fx: [], parts: [], fires: [],
     aim: { x: 2000, y: 2000 }, aimT: { x: 2000, y: 2000 }, fovI: 1, fov: ZOOMS[1], lock: null, pidT: 0,
     drone: { cx: 2000, cy: 2000, ang: rr(0, TAU), R: 2400, Rt: 2400, alt: 4000, x: 0, y: 0, hp: 100, hdg: 0 },
-    orbitStandoff: false, pal: M.light < 0.5 ? 0 : 0, sel: 'LGM', ammo: Object.assign({}, M.ammo), rail: 0, flares: 6, flareT: 0,
+    orbitStandoff: false, pal: M.light < 0.5 ? 0 : 0, sel: 'LGM', ammo: Object.assign({}, M.ammo), rail: 0, flares: M.flares || 6, flareT: 0,
+    survival: !!M.survival, wave: 0, waveStart: 0,
     stats: { host: 0, civ: 0, shots: 0, hits: 0, structs: 0, hostVeh: 0 }, msgs: [], pois: [], objectives: [],
     over: null, endT: 0, static: 0, shake: 0, whiteout: 0, warnBeep: 0, help: !demo && mi === 0 && !M.training, helpT: 0, samArmed: true,
     firstImpact: false,
@@ -563,6 +564,7 @@ function newGame(mi, demo = false) {
 }
 
 function populate(G) {
+  if (G.M.survival) return; // survival is a pure-combat sandbox — no civilians
   const Wd = G.Wd;
   // pedestrians on sidewalks
   for (let k = 0; k < (G.M.winter ? 45 : 70); k++) {
@@ -927,6 +929,82 @@ const MISSIONS = [
       msg('Steppe Hawk, an enemy jammer is blinding our drones from the fog to the south-west. Find the emitter and its launcher and take them down.', '#9fd8ff', 'DNIPRO');
     },
   },
+  {
+    id: 'm8', name: 'STEEL RAIN', sub: 'Strike a massed staging area', tod: 'SUMMER · DAY', light: 1, seed: 8841, weather: 'cloud',
+    region: 'Enemy staging area, open steppe south of Zelena Balka',
+    timeLimit: 660, civLimit: 4, ammo: { LGM: 12, LGB: 4 },
+    brief: [
+      'The enemy has massed armour, artillery and air defence in the open ahead of an offensive. This is a target-rich area and a hard one — two SAM sites cover it.',
+      'Destroy both search radars and all the launchers to open the airspace, then work the armour and guns. A fuel park sits in the middle of it all.',
+      'A generous loadout, but watch your flares — two batteries can put two missiles up at once.',
+    ],
+    threats: 'Two radar-guided SAM sites (long range). Heavy armour and artillery.',
+    setup(G) {
+      const Wd = G.Wd;
+      // SAM site A (north-west)
+      const fa = farmFor(G, -1, 1), ax = fa.x + 40, ay = fa.y - 40; clearArea(G, ax, ay, 70);
+      const radarA = mkVeh('radar', { hostile: true, parked: true, x: ax, y: ay + 14, hd: 0.3, heat: 0.62, eng: 0.8 });
+      const telA1 = mkVeh('tel', { hostile: true, parked: true, x: ax - 34, y: ay - 16, hd: 1.1, heat: 0.55 });
+      const telA2 = mkVeh('tel', { hostile: true, parked: true, x: ax + 36, y: ay - 18, hd: 1.8, heat: 0.55 });
+      berm(G, telA1.x, telA1.y, 9); berm(G, telA2.x, telA2.y, 9); berm(G, radarA.x, radarA.y, 8);
+      samSite(G, telA1, radarA, 4500, 2600); samSite(G, telA2, radarA, 4500, 2600);
+      G.vehs.push(radarA, telA1, telA2);
+      infantry(G, 5, ax, ay, 40);
+      // SAM site B (south-east)
+      const fb = farmFor(G, 1, -1), bx = fb.x - 40, by = fb.y + 36; clearArea(G, bx, by, 60);
+      const radarB = mkVeh('radar', { hostile: true, parked: true, x: bx, y: by, hd: 1.0, heat: 0.6, eng: 0.8 });
+      const telB1 = mkVeh('tel', { hostile: true, parked: true, x: bx + 32, y: by - 18, hd: 0.4, heat: 0.55 });
+      berm(G, telB1.x, telB1.y, 9); berm(G, radarB.x, radarB.y, 8);
+      samSite(G, telB1, radarB, 4200, 2400);
+      G.vehs.push(radarB, telB1);
+      infantry(G, 3, bx, by, 30);
+      // armour + artillery + fuel park in the open centre-south
+      const mx = 1600, my = 1150; clearArea(G, mx, my, 150);
+      const armour = [];
+      for (let k = 0; k < 8; k++) {
+        const type = pick(['tank', 'tank', 'ifv', 'spg']);
+        const v = mkVeh(type, { hostile: true, parked: true, x: mx + (k % 4) * 40 + rr(-6, 6), y: my + Math.floor(k / 4) * 44 + rr(-6, 6), hd: rr(0, TAU), heat: 0.55 });
+        if (type === 'spg') { v.gun = { cd: rr(5, 16) }; }
+        armour.push(v); G.vehs.push(v);
+      }
+      const fuelPark = [];
+      for (let k = 0; k < 3; k++) { const v = mkVeh('fuel', { hostile: true, parked: true, x: mx + 60 + k * 16, y: my - 40, hd: 0.2, heat: 0.45, day: [92, 98, 70] }); fuelPark.push(v); G.vehs.push(v); }
+      infantry(G, 8, mx + 60, my, 70);
+      const radars = [radarA, radarB], tels = [telA1, telA2, telB1];
+      G.objectives = [
+        { text: 'Destroy both search radars', done: () => radars.every(v => !v.alive), count: () => radars.filter(v => !v.alive).length + '/2' },
+        { text: 'Destroy the SAM launchers (3)', done: () => tels.every(v => !v.alive), count: () => tels.filter(v => !v.alive).length + '/3' },
+        { text: 'Destroy the armour (8)', done: () => armour.every(v => !v.alive), count: () => armour.filter(v => !v.alive).length + '/8' },
+        { text: '(Optional) Destroy the fuel park', done: () => fuelPark.every(v => !v.alive), optional: true },
+      ];
+      G.pois.push({ x: ax, y: ay, r: 260, label: 'SAM A' });
+      G.pois.push({ x: bx, y: by, r: 220, label: 'SAM B' });
+      G.pois.push({ x: mx + 60, y: my, r: 300, label: 'ARMOUR' });
+      G.aim.x = mx; G.aim.y = my + 400; G.fovI = 1;
+      msg('Steppe Hawk, large enemy concentration in the open to the south. Two SAM sites are active. Take down the radars first, then go to work. Good hunting.', '#9fd8ff', 'DNIPRO');
+    },
+  },
+  {
+    id: 'surv', name: 'SURVIVAL', sub: 'Endless waves — hold the line', tod: 'SUMMER · CLOUD', light: 1, seed: 9099, weather: 'cloud', survival: true,
+    region: 'Zelena Balka, under sustained assault',
+    timeLimit: 99999, civLimit: 99999, ammo: { LGM: 999, LGB: 999 }, flares: 20,
+    brief: [
+      'Endless survival. Wave after wave of enemy armour and air defence comes at the village. You have effectively unlimited weapons and a full load of flares, refilled every wave.',
+      'Destroy everything inbound. Each wave is bigger and brings more SAMs. Dodge their missiles with flares — two hits will down you.',
+      'There is no winning here, only how many waves you hold and how much you kill.',
+    ],
+    threats: 'Escalating SAM batteries, more every wave.',
+    setup(G) {
+      G.wave = 0; G.waveStart = G.t;
+      spawnWave(G);
+      G.objectives = [
+        { text: 'WAVES HELD', done: () => false, count: () => '' + Math.max(0, G.wave - 1) },
+        { text: 'ARMOUR DESTROYED', done: () => false, count: () => '' + G.stats.hostVeh },
+      ];
+      G.aim.x = 2000; G.aim.y = 2000; G.fovI = 1;
+      msg('Steppe Hawk, hold the line over Zelena Balka. Waves are inbound. Weapons free, and good luck.', '#9fd8ff', 'DNIPRO');
+    },
+  },
 ];
 
 // training syllabus: each step shows a prompt and advances when its condition is met
@@ -948,6 +1026,44 @@ function updateTraining() {
   }
 }
 
+// ------------------------------------------------------------ survival (endless waves)
+function spawnWave(G) {
+  const Wd = G.Wd;
+  G.wave++;
+  G.waveStart = G.t;
+  const entries = [Wd.node(0, 8), Wd.node(16, 8), Wd.node(8, 0), Wd.node(8, 16)];
+  const dest = Wd.node(8, 8);
+  const nArmour = 3 + Math.floor(G.wave * 1.5);
+  for (let i = 0; i < nArmour; i++) {
+    const start = entries[(G.wave + i) % 4];
+    const type = pick(['tank', 'tank', 'ifv', 'spg', 'truck']);
+    const v = mkVeh(type, { hostile: true, maxSpd: rr(8, 13), onEnd: 'park', heat: 0.6 });
+    const path = bfs(Wd, start, dest);
+    if (path && path.length > 1) setPath(v, path, -i * 9 - 6);
+    else { v.parked = true; v.x = start.x; v.y = start.y; }
+    if (type === 'spg') v.gun = { cd: rr(6, 16) };
+    G.vehs.push(v);
+  }
+  const nSam = Math.min(1 + Math.floor(G.wave / 2), 6);
+  const comps = Wd.compounds.slice();
+  for (let i = 0; i < nSam && comps.length; i++) {
+    const f = comps.splice(ri(0, comps.length - 1), 1)[0];
+    const tel = mkVeh('tel', { hostile: true, parked: true, x: f.yard.x + rr(-18, 18), y: f.yard.y + rr(-18, 18), hd: rr(0, TAU), heat: 0.5 });
+    samSite(G, tel, null, 0, rr(2800, 3600));
+    tel.sam.cd = rr(8, 16);
+    G.vehs.push(tel);
+  }
+  G.flares = G.M.flares || 20; // refill flares each wave
+  msg('WAVE ' + G.wave + ' inbound — ' + nArmour + ' armour, ' + nSam + ' SAM' + (nSam > 1 ? 's' : '') + '. Weapons free.', '#ffd38a', 'DNIPRO');
+  Snd.warn();
+}
+function updateSurvival(dt) {
+  if (!G.survival || G.over) return;
+  const aliveHost = G.vehs.filter(v => v.alive && v.hostile).length;
+  // next wave when the area is nearly cleared, or on a backstop timer; capped for performance
+  if (aliveHost < 44 && (aliveHost <= 2 || (G.t - G.waveStart) > 55)) spawnWave(G);
+}
+
 // ============================================================ simulation
 function updateDrone(dt) {
   const D = G.drone;
@@ -964,7 +1080,7 @@ function updateDrone(dt) {
 function update(dt) {
   G.t += dt;
   updateClouds(dt);
-  if (!G.demo && !G.over) G.timeLeft -= dt;
+  if (!G.demo && !G.over && !G.survival) G.timeLeft -= dt;
   // camera
   if (G.lock && G.lock.type === 'ent') {
     const e = G.lock.e;
@@ -1002,6 +1118,7 @@ function update(dt) {
   G.static = Math.max(0, G.static - dt);
   if (G.helpT < 30) G.helpT += dt;
   updateTraining();
+  updateSurvival(dt);
   if (!G.over) {
     const req = G.objectives.filter(o => !o.optional);
     for (const o of G.objectives) if (!o.reported && o.done()) {
@@ -1896,12 +2013,14 @@ function drawHUD() {
   txt(String(Math.round(V.bearing) % 360).padStart(3, '0'), cx, ty + 16 * u, 14, HUD, 'center');
   // top-left: mission & objectives
   let y = 22 * u;
-  txt(G.M.name + '   ' + fmtT(G.timeLeft), padL, y, 14, G.timeLeft < 60 ? AMBER : HUD); y += lh;
+  txt(G.M.name + '   ' + (G.survival ? 'WAVE ' + G.wave : fmtT(G.timeLeft)), padL, y, 14, (!G.survival && G.timeLeft < 60) ? AMBER : HUD); y += lh;
   for (const o of G.objectives) {
     const d = o.done();
     txt((d ? '■ ' : '□ ') + o.text + (o.count && !d ? ' ' + o.count() : ''), padL, y, 12, d ? '#7fe08f' : o.optional ? HUD_DIM : HUD); y += lh * 0.95;
   }
-  txt('CIV CAS ' + G.stats.civ + '/' + G.M.civLimit + '   HOSTILE ' + G.stats.host, padL, y, 12, G.stats.civ ? AMBER : HUD_DIM); y += lh;
+  if (G.survival) txt('ARMOUR ' + G.stats.hostVeh + '   INFANTRY ' + G.stats.host, padL, y, 12, HUD_DIM);
+  else txt('CIV CAS ' + G.stats.civ + '/' + G.M.civLimit + '   HOSTILE ' + G.stats.host, padL, y, 12, G.stats.civ ? AMBER : HUD_DIM);
+  y += lh;
   const leftEnd = y;
   // left telemetry
   y = cy - lh * 2;
@@ -2282,6 +2401,27 @@ function endMission() {
   showZoom(false);
   const s = G.stats, win = G.over.win, M = G.M;
   const acc = s.shots ? s.hits / s.shots : 0;
+  if (G.survival) {
+    const wavesHeld = Math.max(0, G.wave - 1);
+    const sc = s.hostVeh * 100 + s.host * 20 + wavesHeld * 250;
+    const best = store.get('steppehawk.surv', {});
+    const prevW = best.waves || 0, prevS = best.score || 0;
+    if (wavesHeld > prevW || (wavesHeld === prevW && sc > prevS)) store.set('steppehawk.surv', { waves: wavesHeld, score: sc });
+    $('eTitle').textContent = 'SURVIVAL OVER';
+    $('eBody').innerHTML = `<div class="grade">${wavesHeld}</div>
+      <p>${G.over.reason}. You held ${wavesHeld} wave${wavesHeld === 1 ? '' : 's'}.</p>
+      <div class="kv">
+        <span>WAVES HELD</span><span>${wavesHeld}</span>
+        <span>ARMOUR DESTROYED</span><span>${s.hostVeh}</span>
+        <span>INFANTRY</span><span>${s.host}</span>
+        <span>WEAPONS</span><span>${s.shots} released · ${Math.round(acc * 100)}% effective</span>
+        <span>SCORE</span><span>${sc}</span>
+        <span>BEST</span><span>${Math.max(wavesHeld, prevW)} waves · ${Math.max(sc, prevS)}</span>
+      </div>`;
+    $('eNext').classList.add('hidden');
+    show('end', true);
+    return;
+  }
   const objDone = G.objectives.filter(o => o.done()).length;
   let score = s.host * 100 + objDone * 300 - s.civ * 400 - s.structs * 15 + (win ? 600 + Math.round(G.timeLeft) * 2 + Math.round(acc * 300) : 0);
   score = Math.max(0, score);

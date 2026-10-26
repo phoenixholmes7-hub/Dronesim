@@ -20,6 +20,8 @@ The UAV mode is plain HTML5 canvas and needs nothing. The FPV modes use [three.j
 | 6 | **Bridge Denial** | Summer, rain | Destroy an engineer team laying a pontoon crossing by the bridge, under a short-range SAM and reduced visibility. |
 | 7 | **Night Convoy** | Summer, night | Interdict a resupply convoy on the highway before it clears the sector. A mobile SAM wakes on your first strike. |
 | 8 | **Blind Eye** | Summer, fog | Hunt an electronic-warfare jammer and its launcher in thick fog that cuts your sensor range. |
+| 9 | **Steel Rain** | Summer, cloud | A big, hard target-rich area: two radar-guided SAM sites, massed armour, artillery and a fuel park. |
+| — | **Survival** | Endless | Wave after wave of armour and escalating SAMs attack the village. Effectively unlimited weapons and flares — see how many waves you hold. |
 
 The world is generated procedurally for each mission. It includes wheat, sunflower and black-soil fields, tree windbreaks, a village with gabled houses and Soviet-era apartment blocks, a market and a church, collective farms, a river with a bridge, power lines, and civilian traffic, pedestrians and tractors. Each mission has its own weather — clear, cloud, rain, snow or fog — with drifting cloud shadows, and hot targets bloom on the thermal sensor.
 
@@ -50,14 +52,14 @@ The world is generated procedurally for each mission. It includes wheat, sunflow
 
 ## FPV modes (3D)
 
-Pick **FPV Stunts** or **FPV Strike** from the menu tabs. The feed is a goggle-style first-person view with a vignette, scanlines, analog static that breaks up on hits, an OSD (mode, speed, altitude, battery and throttle) and motor sound.
+Pick **FPV Stunts** or **FPV Strike** from the menu tabs. The 3D view runs through a cinematic pipeline — PBR materials with sky reflections, soft shadows, bloom, filmic (ACES) tone mapping and a colour grade — rendered as a goggle feed with a vignette, scanlines, prop-blur in the corners, and analog static that breaks up on hits. A **lens** button (`T`) cycles the camera through **normal, white-hot, black-hot and night-vision**. A full OSD gives you an artificial horizon, a flight-path marker, heading, speed, altitude, battery and throttle — plus direction arrows with range to the next gate or the nearest target, so you can always find the action. Motor sound scales with throttle. The heavy effects are tiered and shed automatically on weaker phones.
 
 | Sortie | Tab | What it is |
 |---|---|---|
 | **Free Fly / Golden Hour** | FPV Stunts | Open freestyle. Score tricks and find the gaps, no clock. |
 | **Trick Park** | FPV Stunts | Score attack against the clock; the bridge, wires and alley gaps pay big in combos. |
-| **Gate Race — River Run / Village Sprint** | FPV Stunts | Fly the gates in order against the clock. |
-| **Column Hunt / Defence Suppression / Depot Raid** | FPV Strike | One-way diving FPV strikes on armour, dodging flak. |
+| **Gate Race — River Run / Village Sprint / Field Slalom** | FPV Stunts | Fly the gates in order against the clock. |
+| **Column Hunt / Defence Suppression / Depot Raid / Night Hunters** | FPV Strike | One-way diving FPV strikes on armour, dodging flak, by day and night. |
 | **FPV Bomber — Trench Line / Night Drops** | FPV Strike | A reusable bomber quad: fly over the target and release munitions that fall with your speed. |
 
 - **Flight modes.** *Self-levelling* holds the horizon for you; *acro* gives full rate control for flips, rolls and loops but will not catch you. Switch with **MODE** / `M`.

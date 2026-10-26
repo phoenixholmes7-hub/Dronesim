@@ -9,3 +9,9 @@ export {
   DoubleSide, FrontSide, BackSide, AdditiveBlending, NormalBlending, SRGBColorSpace, LinearSRGBColorSpace, NoToneMapping, ACESFilmicToneMapping, PCFSoftShadowMap,
   PMREMGenerator, EquirectangularReflectionMapping, DynamicDrawUsage, REVISION
 } from 'three';
+export { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+export { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+export { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
+export { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+export { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
+export { FXAAShader } from 'three/examples/jsm/shaders/FXAAShader.js';

@@ -57,6 +57,12 @@ const SORTIES = [
   { id: 'bomb_night', tab: 'strike', mode: 'bomb', name: 'FPV BOMBER — NIGHT DROPS', sub: 'Bombing run after dark', tod: 'SUMMER · NIGHT',
     seed: 7302, light: 0.3, weather: 'clear', bombs: 12, flak: 2,
     brief: 'Same bomber, at night, against a laager lit only by its own heat. Vehicles glow; civilians do not — be sure before you pickle.' },
+  { id: 'race_slalom', tab: 'stunt', mode: 'race', name: 'GATE RACE — FIELD SLALOM', sub: 'Weave the gates low over the fields', tod: 'SUMMER · DAY',
+    seed: 7103, light: 1, weather: 'fair',
+    brief: 'A low, weaving slalom across the open fields and under the power lines. Stay low and smooth — the fast line is the clean line.' },
+  { id: 'strike_night', tab: 'strike', mode: 'strike', name: 'NIGHT HUNTERS', sub: 'One-way FPV runs after dark', tod: 'SUMMER · NIGHT',
+    seed: 7205, light: 0.26, weather: 'clear', drones: 6, flak: 2,
+    brief: 'One-way strikes at night. Engines and crews glow on the feed; civilians do not. Flak is heavier in the dark, so jink on the run-in.' },
 ];
 
 // ============================================================ lazy library load
@@ -142,6 +148,50 @@ function makePrismGeometry() {
   return g;
 }
 
+// Goggle lens/camera post shader: 0 normal, 1 white-hot thermal, 2 black-hot, 3 night vision.
+// Thermal keys on a cheap "heat" proxy (warm, red-ish, bright things read hot; the sky reads cold).
+const LENS_SHADER = {
+  uniforms: { tDiffuse: { value: null }, mode: { value: 0 }, time: { value: 0 } },
+  vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
+  fragmentShader: [
+    'uniform sampler2D tDiffuse; uniform float mode; uniform float time; varying vec2 vUv;',
+    'float rand(vec2 c){ return fract(sin(dot(c, vec2(12.9898,78.233)))*43758.5453); }',
+    'void main(){',
+    '  vec3 col = texture2D(tDiffuse, vUv).rgb;',
+    '  if (mode < 0.5) {',
+    '    vec3 c = (col - 0.5) * 1.14 + 0.5;',                       // contrast
+    '    float l = dot(c, vec3(0.299,0.587,0.114));',
+    '    c = mix(vec3(l), c, 1.08);',                               // slight saturation
+    '    c += vec3(-0.025,0.0,0.035) * (1.0 - l);',                 // teal shadows
+    '    c += vec3(0.045,0.022,-0.03) * l;',                        // warm highlights
+    '    float d = distance(vUv, vec2(0.5));',
+    '    c *= 1.0 - d*d*0.5;',                                      // cinematic vignette
+    '    c += (rand(vUv*vec2(900.0,520.0)+time)-0.5)*0.04;',        // film grain
+    '    gl_FragColor = vec4(clamp(c,0.0,1.0),1.0); return;',
+    '  }',
+    '  if (mode < 2.5) {',
+    '    float heat = clamp(col.r*0.85 + col.g*0.35 - col.b*0.55 + 0.12, 0.0, 1.0);',
+    '    heat = pow(heat, 0.8);',
+    '    float v = mode < 1.5 ? heat : 1.0 - heat;',
+    '    float grain = (rand(vUv*vec2(700.0,400.0)+time)-0.5)*0.05;',
+    '    gl_FragColor = vec4(vec3(v+grain),1.0);',
+    '  } else {',
+    '    float lum = dot(col, vec3(0.299,0.587,0.114));',
+    '    float amp = clamp(lum*2.3+0.04,0.0,1.0);',
+    '    float n = (rand(vUv*vec2(640.0,360.0)+time)-0.5)*0.12;',
+    '    float scan = 0.9 + 0.1*sin(vUv.y*900.0);',
+    '    gl_FragColor = vec4(vec3(0.10,1.0,0.22)*(amp*scan+n),1.0);',
+    '  }',
+    '}',
+  ].join('\n'),
+};
+const LENS_NAMES = ['NORMAL', 'WHOT', 'BHOT', 'NV'];
+function toggleLens(G) {
+  G.lensMode = (G.lensMode + 1) % 4;
+  if (G.lensPass) G.lensPass.uniforms.mode.value = G.lensMode;
+  flash(G, 'CAM: ' + ['NORMAL', 'WHITE-HOT', 'BLACK-HOT', 'NIGHT VISION'][G.lensMode], '#9effa8');
+}
+
 // Procedural textures (generated per sortie, freed on exit). Neutral/light so per-instance
 // InstancedMesh colours still tint them. Give the world concrete, tiles, ground relief and ripples.
 function makeTextures() {
@@ -187,6 +237,21 @@ function makeSky(scene, zenith, mid, horizon) {
   dome.renderOrder = -1; dome.frustumCulled = false; scene.add(dome);
   return { dome, tex };
 }
+// a sun disc with a soft glow, billboarded at the sky distance
+function addSun(scene, dusk) {
+  const c = document.createElement('canvas'); c.width = c.height = 128; const g = c.getContext('2d');
+  const grd = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  grd.addColorStop(0, dusk ? 'rgba(255,205,140,1)' : 'rgba(255,251,238,1)');
+  grd.addColorStop(0.14, 'rgba(255,240,205,0.9)');
+  grd.addColorStop(0.5, dusk ? 'rgba(255,180,120,0.3)' : 'rgba(255,225,180,0.22)');
+  grd.addColorStop(1, 'rgba(255,210,150,0)');
+  g.fillStyle = grd; g.fillRect(0, 0, 128, 128);
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1),
+    new THREE.MeshBasicMaterial({ map: tex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, fog: false, toneMapped: false }));
+  m.scale.setScalar(dusk ? 460 : 320); m.renderOrder = 1; scene.add(m);
+  return m;
+}
 // soft drifting cloud layer (horizontal billboards seen from below)
 function makeClouds3D(scene, cfg, night) {
   if (cfg.weather === 'clear' && !night) return null;
@@ -230,6 +295,7 @@ function buildScene(cfg) {
   const skyObj = makeSky(scene, zenith.getHex(), sky.getHex(), horizon.getHex());
   const skyDome = skyObj.dome, skyTex = skyObj.tex;
   const cloudLayer = makeClouds3D(scene, cfg, night);
+  const sunSprite = (night || over) ? null : addSun(scene, dusk);
 
   // quality tier: shadows on desktop and capable phones only (and droppable at runtime if slow)
   const strong = !API.isTouch || ((navigator.hardwareConcurrency || 4) >= 6 && (navigator.deviceMemory || 4) >= 4);
@@ -347,7 +413,7 @@ function buildScene(cfg) {
   // weather particles
   const weather = addWeather(scene, cfg);
 
-  return { scene, Wd, cfg, night, dusk, over, collBlds, pylons, wires, sun, sunDir, deckH, bxw, gtex, water, skyDome, skyTex, cloudLayer, shadows: strong, tex };
+  return { scene, Wd, cfg, night, dusk, over, collBlds, pylons, wires, sun, sunDir, deckH, bxw, gtex, water, skyDome, skyTex, cloudLayer, sunSprite, shadows: strong, tex };
 }
 
 function addRoads(scene, Wd, night) {
@@ -440,14 +506,14 @@ function addWeather(scene, cfg) {
 }
 
 // ============================================================ dynamic content: targets & flak
-const VEHCOL = { tank: 0x3c4030, ifv: 0x40442f, spg: 0x3a3e2d, tel: 0x44483a, radar: 0x4a4d40, fuel: 0x5a6042, truck: 0x6a5a38, car: 0x9a3030, van: 0x4a5a8a, bus: 0xd0b840, staff: 0x30362a };
+const VEHCOL = { tank: 0x5c6248, ifv: 0x606446, spg: 0x585c42, tel: 0x666a52, radar: 0x6c6f5a, fuel: 0x7c825e, truck: 0x7a6a44, car: 0xb04038, van: 0x566aa0, bus: 0xe0c850, staff: 0x4a5040 };
 function addTargets(G) {
   const cfg = G.cfg, Wd = G.Wd, targets = [], flak = [];
   const mkMesh = (type, hostile) => {
     const T = API.VT[type] || API.VT.car;
     const grp = new THREE.Group();
     const bodyC = hostile ? (VEHCOL[type] || 0x3c4030) : (VEHCOL[type] || 0x8a8a8a);
-    const body = new THREE.Mesh(new THREE.BoxGeometry(T.L, T.H * 0.7, T.W), new THREE.MeshStandardMaterial({ color: bodyC, roughness: 0.9, metalness: 0.1 }));
+    const body = new THREE.Mesh(new THREE.BoxGeometry(T.L, T.H * 0.7, T.W), new THREE.MeshStandardMaterial({ color: bodyC, roughness: 0.68, metalness: 0.18, envMapIntensity: 1.2 }));
     body.position.y = T.H * 0.35; grp.add(body);
     if (type === 'tank' || type === 'ifv' || type === 'spg') {
       const tur = new THREE.Mesh(new THREE.BoxGeometry(T.L * 0.5, T.H * 0.4, T.W * 0.7), body.material.clone());
@@ -497,6 +563,13 @@ function addTargets(G) {
       addVeh(type, cx + (k % 5) * 22 + rr(-4, 4), cy + Math.floor(k / 5) * 26, rr(0, TAU), true);
     }
     addFlak(cx + 50, cy + 60);
+  } else if (cfg.id === 'strike_night') {
+    const cx = 2550, cy = 1250;
+    for (let k = 0; k < 9; k++) {
+      const type = k % 4 === 0 ? 'fuel' : pick(['tank', 'ifv', 'spg', 'tel', 'truck']);
+      addVeh(type, cx + (k % 3) * 28 + rr(-5, 5), cy + Math.floor(k / 3) * 30, rr(0, TAU), true);
+    }
+    for (let f = 0; f < 2; f++) addFlak(cx + rr(-30, 60), cy + rr(-20, 70));
   } else if (cfg.mode === 'bomb') {
     const cx = cfg.id === 'bomb_night' ? 1500 : 1300, cy = 1150;
     for (let k = 0; k < 9; k++) {
@@ -814,6 +887,9 @@ function buildGates(G) {
   const cfg = G.cfg, Wd = G.Wd, gates = [], pts = [];
   if (cfg.id === 'race_river') {
     for (let y = 700; y <= 3400; y += 340) { const rx = Wd.riverX(y); pts.push({ x: rx + (chance(0.5) ? 40 : -40), y, h: y > 1800 && y < 2200 ? 3.2 : rr(10, 24) }); }
+  } else if (cfg.id === 'race_slalom') {
+    // a low weaving slalom across the western fields, around the distribution-line area
+    for (let i = 0; i <= 11; i++) { const x = 500 + i * 250, y = 1640 + (i % 2 ? 180 : -180); pts.push({ x, y, h: i % 3 === 0 ? 6 : rr(8, 14) }); }
   } else {
     const path = [[700, 2000], [1200, 2000], [1750, 2000], [2000, 2250], [2000, 1750], [1750, 1500], [2250, 1500], [2600, 2000], [2600, 2600], [2000, 2600]];
     for (const [x, y] of path) pts.push({ x, y, h: rr(8, 16) });
@@ -896,6 +972,107 @@ function initHud() {
 }
 const flashes = [];
 function flash(G, text, color) { G.hudFlashes.push({ text, color, t: 0 }); if (G.hudFlashes.length > 6) G.hudFlashes.shift(); }
+
+// project a scene-space point to HUD pixels (+ behind flag and range from the camera)
+let _pv, _pf;
+function toScreen(G, px, py, pz) {
+  if (!_pv) { _pv = new THREE.Vector3(); _pf = new THREE.Vector3(); }
+  const cam = G.camera;
+  _pf.set(0, 0, -1).applyQuaternion(cam.quaternion);
+  const dx = px - cam.position.x, dy = py - cam.position.y, dz = pz - cam.position.z;
+  const dot = dx * _pf.x + dy * _pf.y + dz * _pf.z;
+  _pv.set(px, py, pz).project(cam);
+  return { x: (_pv.x * 0.5 + 0.5) * G.cssW, y: (-_pv.y * 0.5 + 0.5) * G.cssH, behind: dot < 0, dist: Math.hypot(dx, dy, dz) };
+}
+// faint prop-blur discs in the lower corners, intensity rising with throttle
+function drawProps(G) {
+  const ctx = hudCtx, w = G.cssW, h = G.cssH, r = Math.min(w, h) * 0.3, a = 0.08 + clamp(G.quad.throttle, 0, 1) * 0.14;
+  for (const side of [-1, 1]) {
+    const px = side < 0 ? -r * 0.38 : w + r * 0.38, py = h + r * 0.12;
+    ctx.save();
+    ctx.strokeStyle = `rgba(30,44,34,${a})`; ctx.lineWidth = 2.5;
+    for (let i = 0; i < 4; i++) { const a0 = G.t * 26 * side + i * Math.PI / 2; ctx.beginPath(); ctx.arc(px, py, r, a0, a0 + 0.55); ctx.stroke(); }
+    ctx.strokeStyle = `rgba(30,44,34,${a * 0.6})`;
+    ctx.beginPath(); ctx.arc(px, py, r, 0, TAU); ctx.stroke();
+    ctx.restore();
+  }
+}
+// a pro goggle OSD: artificial horizon, flight-path marker, heading, and target/gate guidance
+function drawOSD(G) {
+  const ctx = hudCtx, w = G.cssW, h = G.cssH, cx = w / 2, cy = h / 2, u = clamp(Math.min(w, h) / 620, 0.72, 1.3);
+  const cam = G.camera, Q = G.quad, line = 'rgba(150,255,170,0.65)';
+  if (!_pv) { _pv = new THREE.Vector3(); _pf = new THREE.Vector3(); }
+  // horizon line (geometric, drawn at eye level so it rolls and pitches naturally)
+  const fx = _pf.set(0, 0, -1).applyQuaternion(cam.quaternion).x, fz = _pf.z;
+  let flx = fx, flz = fz; const fl = Math.hypot(flx, flz) || 1; flx /= fl; flz /= fl;
+  const rx = flz, rz = -flx, far = 1600, ey = cam.position.y;
+  const aL = toScreen(G, cam.position.x + flx * far - rx * far, ey, cam.position.z + flz * far - rz * far);
+  const aR = toScreen(G, cam.position.x + flx * far + rx * far, ey, cam.position.z + flz * far + rz * far);
+  if (!aL.behind && !aR.behind) {
+    ctx.strokeStyle = line; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(aL.x, aL.y); ctx.lineTo(aR.x, aR.y); ctx.stroke();
+    // small centre ticks
+    const mx = (aL.x + aR.x) / 2, my = (aL.y + aR.y) / 2, dxl = (aR.x - aL.x), dyl = (aR.y - aL.y), ll = Math.hypot(dxl, dyl) || 1;
+    ctx.beginPath(); ctx.moveTo(mx - dyl / ll * 5 * u, my + dxl / ll * 5 * u); ctx.lineTo(mx + dyl / ll * 5 * u, my - dxl / ll * 5 * u); ctx.stroke();
+  }
+  // flight-path (velocity) marker
+  const spd = Q.v.length();
+  if (spd > 2) {
+    const n = Q.v.clone().normalize();
+    const fp = toScreen(G, cam.position.x + n.x * 60, cam.position.y + n.y * 60, cam.position.z + n.z * 60);
+    if (!fp.behind && fp.x > 0 && fp.x < w && fp.y > 0 && fp.y < h) {
+      ctx.strokeStyle = 'rgba(160,255,175,0.9)'; ctx.lineWidth = 1.5; const r = 5 * u;
+      ctx.beginPath(); ctx.arc(fp.x, fp.y, r, 0, TAU);
+      ctx.moveTo(fp.x - r - 4 * u, fp.y); ctx.lineTo(fp.x - r, fp.y);
+      ctx.moveTo(fp.x + r, fp.y); ctx.lineTo(fp.x + r + 4 * u, fp.y);
+      ctx.moveTo(fp.x, fp.y - r - 4 * u); ctx.lineTo(fp.x, fp.y - r); ctx.stroke();
+    }
+  }
+  // heading (scene +z = north)
+  const hdg = ((Math.atan2(fx, fz) * 180 / Math.PI) + 360) % 360;
+  const T = (s, x, y, size, c, al) => { ctx.font = `${Math.round(size)}px "Share Tech Mono", ui-monospace, monospace`; ctx.textAlign = al || 'left'; ctx.textBaseline = 'alphabetic'; ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.strokeText(s, x, y); ctx.fillStyle = c; ctx.fillText(s, x, y); };
+  const compass = { 0: 'N', 45: 'NE', 90: 'E', 135: 'SE', 180: 'S', 225: 'SW', 270: 'W', 315: 'NW' };
+  let cTxt = String(Math.round(hdg)).padStart(3, '0'); for (const k in compass) if (Math.abs(((hdg - k + 540) % 360) - 180) > 157) cTxt = compass[k];
+  T('▲ ' + String(Math.round(hdg)).padStart(3, '0') + '°', cx, 44 * u, 12 * u, 'rgba(150,255,170,0.75)', 'center');
+
+  // target / gate guidance
+  const edge = (p, color, label, rng) => {
+    const s = toScreen(G, p.x, p.y, p.z);
+    const on = !s.behind && s.x > 24 && s.x < w - 24 && s.y > 40 && s.y < h - 40;
+    if (on) {
+      const bs = clamp(600 / Math.max(30, s.dist) * 14, 8, 34) * u;
+      ctx.strokeStyle = color; ctx.lineWidth = 1.6;
+      const c = bs * 0.35;
+      ctx.beginPath();
+      for (const [sxs, sys] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) { ctx.moveTo(s.x + sxs * bs, s.y + sys * (bs - c)); ctx.lineTo(s.x + sxs * bs, s.y + sys * bs); ctx.lineTo(s.x + sxs * (bs - c), s.y + sys * bs); }
+      ctx.stroke();
+      if (rng) T(label + ' ' + Math.round(s.dist) + 'm', s.x, s.y - bs - 4 * u, 11 * u, color, 'center');
+    } else {
+      let ang = s.behind ? Math.atan2(cy - s.y, cx - s.x) : Math.atan2(s.y - cy, s.x - cx);
+      const m = Math.min(w, h) * 0.40, ex = cx + Math.cos(ang) * m, ey2 = cy + Math.sin(ang) * m;
+      ctx.save(); ctx.translate(ex, ey2); ctx.rotate(ang);
+      ctx.fillStyle = color; ctx.beginPath(); ctx.moveTo(10 * u, 0); ctx.lineTo(-6 * u, 6 * u); ctx.lineTo(-6 * u, -6 * u); ctx.closePath(); ctx.fill(); ctx.restore();
+      T(label + ' ' + Math.round(s.dist) + 'm', ex - Math.cos(ang) * 22 * u, ey2 - Math.sin(ang) * 22 * u + 4 * u, 11 * u, color, 'center');
+    }
+  };
+  if (G.cfg.mode === 'race' && G.gates && G.gateIdx < G.gates.length) {
+    edge(G.gates[G.gateIdx].pos, '#66ffa0', 'GATE', true);
+  } else if (G.cfg.mode === 'strike' || G.cfg.mode === 'bomb') {
+    let near = null, nd = 1e9;
+    for (const t of G.targets) {
+      if (!t.alive || !t.hostile) continue;
+      const d = Math.hypot(t.x - Q.p.x, t.z - Q.p.z);
+      if (d < nd) { nd = d; near = t; }
+      // faint box on every on-screen hostile
+      const s = toScreen(G, t.x, t.r + 1, t.z);
+      if (!s.behind && s.x > 16 && s.x < w - 16 && s.y > 40 && s.y < h - 40 && t !== near) {
+        ctx.strokeStyle = 'rgba(255,120,100,0.45)'; ctx.lineWidth = 1; const b = 7 * u;
+        ctx.strokeRect(s.x - b, s.y - b, b * 2, b * 2);
+      }
+    }
+    if (near) edge({ x: near.x, y: near.r + 1, z: near.z }, '#ff7a5a', 'TGT', true);
+  }
+}
 function drawHud(G) {
   const dpr = G.dpr, w = G.cssW, h = G.cssH;
   hudCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -930,6 +1107,11 @@ function drawHud(G) {
   // goggle frame circles
   hudCtx.strokeStyle = 'rgba(120,200,140,0.18)'; hudCtx.lineWidth = 2; hudCtx.beginPath(); hudCtx.arc(w / 2, h / 2, Math.min(w, h) * 0.52, 0, TAU); hudCtx.stroke();
 
+  // faint spinning prop discs in the lower corners (FPV immersion)
+  drawProps(G);
+  // artificial horizon, flight-path marker, heading and target/gate guidance
+  drawOSD(G);
+
   // crosshair
   const cx = w / 2, cy = h / 2;
   hudCtx.strokeStyle = green; hudCtx.lineWidth = 1.5;
@@ -942,7 +1124,7 @@ function drawHud(G) {
   // OSD: top-left
   const pad = 16 * u, lh = 18 * u;
   T(G.cfg.name, pad, 24 * u, 14 * u, green);
-  T((Q.mode === 'level' ? 'SELF-LEVEL' : 'ACRO') + (G.input.boost ? '  BOOST' : ''), pad, 24 * u + lh, 12 * u, Q.mode === 'level' ? dim : amber);
+  T((Q.mode === 'level' ? 'SELF-LEVEL' : 'ACRO') + (G.input.boost ? '  BOOST' : '') + (G.lensMode ? '  ' + LENS_NAMES[G.lensMode] : ''), pad, 24 * u + lh, 12 * u, G.lensMode ? amber : (Q.mode === 'level' ? dim : amber));
   // battery
   const bw = 90 * u, bx = pad, by = h - 26 * u;
   hudCtx.strokeStyle = dim; hudCtx.strokeRect(bx, by, bw, 10 * u);
@@ -1008,6 +1190,7 @@ function readInput(G, dt) {
     const strike = (pad.buttons[7] && pad.buttons[7].pressed) || (pad.buttons[0] && pad.buttons[0].pressed);
     if (strike && !G.padStrikePrev) actionPrimary(G); G.padStrikePrev = strike;
     const modeb = pad.buttons[3] && pad.buttons[3].pressed; if (modeb && !G.padModePrev) toggleMode(G); G.padModePrev = modeb;
+    const lensb = pad.buttons[2] && pad.buttons[2].pressed; if (lensb && !G.padLensPrev) toggleLens(G); G.padLensPrev = lensb;
     const rec = pad.buttons[1] && pad.buttons[1].pressed; if (rec && !G.padRecPrev) respawn(G); G.padRecPrev = rec;
   }
   // combine: touch sticks + keyboard + gamepad (whichever is active)
@@ -1033,27 +1216,48 @@ function actionPrimary(G) {
 }
 function toggleMode(G) { G.quad.mode = G.quad.mode === 'level' ? 'acro' : 'level'; flash(G, G.quad.mode === 'acro' ? 'ACRO' : 'SELF-LEVEL', '#9effa8'); if (G.quad.mode === 'level') G.yaw = new THREE.Euler().setFromQuaternion(G.quad.q, 'YXZ').y; }
 
-// ============================================================ touch sticks (floating)
-function bindStick(zone, stick) {
+// ============================================================ touch controls (floating sticks)
+// Bound once to the DOM; all handlers read/write the live session S so they survive sortie changes.
+let fpvBound = false;
+function bindStick(zone, name) {
   const ring = zone.querySelector('.ring'), knob = zone.querySelector('.knob');
   let id = null, ox = 0, oy = 0;
   const rad = 70;
   const at = (x, y) => { ring.style.left = x + 'px'; ring.style.top = y + 'px'; knob.style.left = x + 'px'; knob.style.top = y + 'px'; };
   zone.addEventListener('pointerdown', e => {
-    e.preventDefault(); if (id !== null) return;
-    id = e.pointerId; zone.setPointerCapture(id); zone.classList.add('active'); stick.active = true;
+    e.preventDefault(); if (id !== null || !S) return;
+    const stick = S[name]; id = e.pointerId; zone.setPointerCapture(id); zone.classList.add('active'); stick.active = true;
     const r = zone.getBoundingClientRect(); ox = e.clientX; oy = e.clientY; at(e.clientX - r.left, e.clientY - r.top);
     stick.x = 0; stick.y = 0;
   });
   zone.addEventListener('pointermove', e => {
-    if (e.pointerId !== id) return;
-    const dx = e.clientX - ox, dy = e.clientY - oy, d = Math.hypot(dx, dy), cl = Math.min(d, rad);
+    if (e.pointerId !== id || !S) return;
+    const stick = S[name], dx = e.clientX - ox, dy = e.clientY - oy, d = Math.hypot(dx, dy), cl = Math.min(d, rad);
     const nx = d ? dx / d * cl : 0, ny = d ? dy / d * cl : 0, r = zone.getBoundingClientRect();
     knob.style.left = (ox - r.left + nx) + 'px'; knob.style.top = (oy - r.top + ny) + 'px';
     stick.x = clamp(nx / rad, -1, 1); stick.y = clamp(-ny / rad, -1, 1);
   });
-  const up = e => { if (e.pointerId !== id) return; id = null; zone.classList.remove('active'); stick.active = false; stick.x = 0; stick.y = 0; };
+  const up = e => { if (e.pointerId !== id) return; id = null; zone.classList.remove('active'); if (S) { S[name].active = false; S[name].x = 0; S[name].y = 0; } };
   zone.addEventListener('pointerup', up); zone.addEventListener('pointercancel', up);
+}
+function bindTouchControls() {
+  bindStick(document.getElementById('stickL'), 'stickL');
+  bindStick(document.getElementById('stickR'), 'stickR');
+  for (const b of document.querySelectorAll('#fpvTouch .fpvbtn')) {
+    const act = b.dataset.fa;
+    if (act === 'boost') {
+      b.addEventListener('pointerdown', e => { e.preventDefault(); if (S) S.touchBoost = true; b.classList.add('on'); });
+      const off = () => { if (S) S.touchBoost = false; b.classList.remove('on'); };
+      b.addEventListener('pointerup', off); b.addEventListener('pointercancel', off);
+    } else b.addEventListener('pointerdown', e => {
+      e.preventDefault(); if (!S) return;
+      if (act === 'primary') actionPrimary(S);
+      else if (act === 'mode') toggleMode(S);
+      else if (act === 'lens') toggleLens(S);
+      else if (act === 'recover') respawn(S);
+      else if (act === 'exit') exit();
+    });
+  }
 }
 
 // ============================================================ lifecycle
@@ -1067,7 +1271,7 @@ function ensureDom() {
   touch.innerHTML =
     '<div class="stickzone l" id="stickL"><div class="ring"></div><div class="knob"></div><div class="lbl">THROTTLE / YAW</div></div>' +
     '<div class="stickzone r" id="stickR"><div class="ring"></div><div class="knob"></div><div class="lbl">PITCH / ROLL</div></div>' +
-    '<div class="fpvbtns left"><button class="fpvbtn" data-fa="mode">MODE</button><button class="fpvbtn" data-fa="recover">R</button><button class="fpvbtn" data-fa="exit">EXIT</button></div>' +
+    '<div class="fpvbtns left"><button class="fpvbtn" data-fa="mode">MODE</button><button class="fpvbtn" data-fa="lens">LENS</button><button class="fpvbtn" data-fa="recover">R</button><button class="fpvbtn" data-fa="exit">EXIT</button></div>' +
     '<div class="fpvbtns"><button class="fpvbtn go" data-fa="primary">GO</button><button class="fpvbtn" data-fa="boost">BOOST</button></div>';
   document.body.appendChild(touch);
   // its own brief overlay (kept separate from the UAV brief so the shared COMMENCE button can't fire both)
@@ -1088,6 +1292,10 @@ function layout(G) {
   G.renderer.setPixelRatio(pr);
   G.renderer.setSize(w, h, true);
   G.camera.aspect = w / h; G.camera.updateProjectionMatrix();
+  if (G.composer) {
+    G.composer.setPixelRatio(pr); G.composer.setSize(w, h);
+    if (G.fxaa) G.fxaa.material.uniforms.resolution.value.set(1 / (w * pr), 1 / (h * pr));
+  }
   G.dpr = Math.min(window.devicePixelRatio || 1, 2);
   const hud = document.getElementById('fpvHud');
   hud.width = Math.round(w * G.dpr); hud.height = Math.round(h * G.dpr);
@@ -1128,6 +1336,17 @@ async function start(cfg) {
   } catch (e) { /* IBL is optional */ }
   G.camera = new THREE.PerspectiveCamera(92, 1, 0.3, 4000);
   G.cam = { spd: 0 };
+  // post-processing: cinematic grade + bloom (strong tier) + the goggle lens (thermal / NV)
+  G.lensMode = 0;
+  try {
+    const comp = new THREE.EffectComposer(G.renderer);
+    comp.addPass(new THREE.RenderPass(G.scene, G.camera));
+    if (G.shadows) { G.bloom = new THREE.UnrealBloomPass(new THREE.Vector2(G.cssW || 1280, G.cssH || 720), 0.55, 0.7, 0.85); comp.addPass(G.bloom); }
+    comp.addPass(new THREE.OutputPass());
+    if (G.shadows) { G.fxaa = new THREE.ShaderPass(THREE.FXAAShader); comp.addPass(G.fxaa); }
+    G.lensPass = new THREE.ShaderPass(LENS_SHADER); comp.addPass(G.lensPass);
+    G.composer = comp;
+  } catch (e) { G.composer = null; }
   initFx(G);
   if (cfg.mode === 'strike' || cfg.mode === 'bomb') addTargets(G);
   if (cfg.mode === 'race') buildGates(G);
@@ -1143,19 +1362,8 @@ async function start(cfg) {
   document.getElementById('fpvWrap').classList.add('on');
   document.getElementById('fpvTouch').classList.toggle('on', API.isTouch);
   initHud();
-  bindStick(document.getElementById('stickL'), G.stickL);
-  bindStick(document.getElementById('stickR'), G.stickR);
-  for (const b of document.querySelectorAll('#fpvTouch .fpvbtn')) {
-    const act = b.dataset.fa;
-    if (act === 'boost') { b.addEventListener('pointerdown', e => { e.preventDefault(); G.touchBoost = true; b.classList.add('on'); }); const off = e => { G.touchBoost = false; b.classList.remove('on'); }; b.addEventListener('pointerup', off); b.addEventListener('pointercancel', off); }
-    else b.addEventListener('pointerdown', e => {
-      e.preventDefault();
-      if (act === 'primary') actionPrimary(G);
-      else if (act === 'mode') toggleMode(G);
-      else if (act === 'recover') respawn(G);
-      else if (act === 'exit') exit();
-    });
-  }
+  S = G;                              // make the session live before binding so handlers see it
+  if (!fpvBound) { fpvBound = true; bindTouchControls(); }
   // relabel GO button per mode
   const go = document.querySelector('#fpvTouch .fpvbtn.go');
   go.textContent = cfg.mode === 'bomb' ? 'DROP' : cfg.mode === 'strike' ? 'STRIKE' : 'MODE2';
@@ -1204,6 +1412,7 @@ function loop(now) {
   if (G.shadows) { G.sun.position.copy(G.quad.p).addScaledVector(G.sunDir, 600); G.sun.target.position.copy(G.quad.p); G.sun.target.updateMatrixWorld(); }
   if (G.water && G.water.material.bumpMap) { G.water.material.bumpMap.offset.y += dt * 0.05; G.water.material.bumpMap.offset.x += dt * 0.012; }
   if (G.cloudLayer) for (const c of G.cloudLayer.children) { c.position.x += dt * 4; if (c.position.x > O + 320) c.position.x -= WORLD + 640; }
+  if (G.sunSprite) { G.sunSprite.position.copy(G.quad.p).addScaledVector(G.sunDir, 2500); G.sunSprite.lookAt(G.camera.position); }
   // camera follow (FPV, from the quad with a slight up-tilt)
   const Q = G.quad;
   G.camera.position.copy(Q.p);
@@ -1217,14 +1426,16 @@ function loop(now) {
 
   // adaptive resolution
   const t0 = performance.now();
-  G.renderer.render(G.scene, G.camera);
+  if (G.composer) { if (G.lensPass) G.lensPass.uniforms.time.value = G.t; G.composer.render(); }
+  else G.renderer.render(G.scene, G.camera);
   const ms = performance.now() - t0;
   G.frameMs = (G.frameMs || ms) * 0.9 + ms * 0.1;
   if (G.t - (G.lastAdapt || 0) > 2) {
     G.lastAdapt = G.t;
-    // first drop resolution; if still heavy and shadows are on, turn them off as a last resort
+    // shed cost in order: resolution, then bloom, then shadows
     if (G.frameMs > 22 && G.renderScale > 0.6) { G.renderScale -= 0.15; layout(G); }
-    else if (G.frameMs > 26 && G.shadows) { G.shadows = false; G.renderer.shadowMap.enabled = false; G.sun.castShadow = false; }
+    else if (G.frameMs > 25 && G.bloom && G.bloom.enabled) { G.bloom.enabled = false; }
+    else if (G.frameMs > 27 && G.shadows) { G.shadows = false; G.renderer.shadowMap.enabled = false; G.sun.castShadow = false; }
     else if (G.frameMs < 9 && G.renderScale < 1) { G.renderScale = Math.min(1, G.renderScale + 0.15); layout(G); }
   }
   drawHud(G);
@@ -1285,6 +1496,7 @@ function dispose() {
   // free GPU resources
   G.scene.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) { const m = o.material; (Array.isArray(m) ? m : [m]).forEach(x => { if (x.map) x.map.dispose(); if (x.bumpMap) x.bumpMap.dispose(); x.dispose(); }); } });
   if (G.envRT) G.envRT.dispose();
+  if (G.composer) { try { G.composer.dispose(); } catch (e) {} }
   G.renderer.dispose();
   S = null;
   window.SteppeHawkFPV.active = false;
@@ -1346,6 +1558,7 @@ window.addEventListener('keydown', e => {
   const k = e.key.toLowerCase(); keys[k] = true;
   if (k === ' ') { if (S) actionPrimary(S); e.preventDefault(); }
   else if (k === 'm') { if (S) toggleMode(S); }
+  else if (k === 't' || k === 'v') { if (S) toggleLens(S); }
   else if (k === 'r') { if (S && S.quad) respawn(S); }
   else if (k === 'escape') { exit(); }
   if (k.startsWith('arrow')) e.preventDefault();
