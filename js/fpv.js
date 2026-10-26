@@ -159,6 +159,9 @@ const LENS_SHADER = {
     'void main(){',
     '  vec3 col = texture2D(tDiffuse, vUv).rgb;',
     '  if (mode < 0.5) {',
+    '    vec2 dir = vUv - 0.5; float ca = 0.0014 + dot(dir,dir)*0.006;',   // lens chromatic aberration
+    '    col.r = texture2D(tDiffuse, vUv - dir*ca).r;',
+    '    col.b = texture2D(tDiffuse, vUv + dir*ca).b;',
     '    vec3 c = (col - 0.5) * 1.14 + 0.5;',                       // contrast
     '    float l = dot(c, vec3(0.299,0.587,0.114));',
     '    c = mix(vec3(l), c, 1.08);',                               // slight saturation
@@ -220,8 +223,37 @@ function makeTextures() {
     wid.data[o] = wid.data[o + 1] = wid.data[o + 2] = v; wid.data[o + 3] = 255;
   }
   wbg.putImageData(wid, 0, 0);
+  // ground relief height (smooth, multi-octave) → a real normal map for micro surface lighting
+  const ghc = cv2(256), ghg = ghc.getContext('2d'), ghid = ghg.createImageData(256, 256);
+  for (let y = 0; y < 256; y++) for (let x = 0; x < 256; x++) {
+    const v = 128 + 42 * Math.sin(x * 0.09) * Math.cos(y * 0.08) + 30 * Math.sin((x + y) * 0.05) + 22 * Math.sin((x - y) * 0.13) + (Math.random() - 0.5) * 24;
+    const o = (y * 256 + x) * 4; ghid.data[o] = ghid.data[o + 1] = ghid.data[o + 2] = v; ghid.data[o + 3] = 255;
+  }
+  ghg.putImageData(ghid, 0, 0);
+  const gnorm = heightToNormal(ghc, 2.2);
+  // night window glow: warm windows on black, used as an emissive map after dark
+  const we = cv2(128), weg = we.getContext('2d');
+  weg.fillStyle = '#000'; weg.fillRect(0, 0, 128, 128);
+  for (let r = 0; r < 5; r++) for (let c = 0; c < 4; c++) {
+    if (Math.random() < 0.3) continue; // some windows dark
+    weg.fillStyle = Math.random() < 0.5 ? '#ffd480' : '#ffb84a';
+    weg.fillRect(12 + c * 28, 10 + r * 23, 18, 14);
+  }
   const T = (c, srgb) => { const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 4; if (srgb) t.colorSpace = THREE.SRGBColorSpace; return t; };
-  return { wall: T(wc, true), roof: T(rc, true), gbump: T(gb), wbump: T(wb) };
+  return { wall: T(wc, true), roof: T(rc, true), gbump: T(gb), wbump: T(wb), gnorm: T(gnorm), winEmis: T(we, true) };
+}
+// build an RGB normal map canvas from a grayscale height canvas (Sobel on the red channel)
+function heightToNormal(src, strength) {
+  const s = src.width, sd = src.getContext('2d').getImageData(0, 0, s, s).data;
+  const out = document.createElement('canvas'); out.width = out.height = s;
+  const od = out.getContext('2d'), id = od.createImageData(s, s);
+  const H = (x, y) => sd[(((y + s) % s) * s + ((x + s) % s)) * 4] / 255;
+  for (let y = 0; y < s; y++) for (let x = 0; x < s; x++) {
+    const dx = (H(x - 1, y) - H(x + 1, y)) * strength, dy = (H(x, y - 1) - H(x, y + 1)) * strength;
+    const len = Math.hypot(dx, dy, 1), o = (y * s + x) * 4;
+    id.data[o] = (dx / len * 0.5 + 0.5) * 255; id.data[o + 1] = (dy / len * 0.5 + 0.5) * 255; id.data[o + 2] = (1 / len * 0.5 + 0.5) * 255; id.data[o + 3] = 255;
+  }
+  od.putImageData(id, 0, 0); return out;
 }
 // gradient sky as a tonemapped textured dome (consistent with ACES tone mapping and usable for IBL)
 function makeSky(scene, zenith, mid, horizon) {
@@ -251,6 +283,14 @@ function addSun(scene, dusk) {
     new THREE.MeshBasicMaterial({ map: tex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, fog: false, toneMapped: false }));
   m.scale.setScalar(dusk ? 460 : 320); m.renderOrder = 1; scene.add(m);
   return m;
+}
+// faint drifting dust/atmosphere motes that catch the light near the camera (depth cue)
+function makeDust(scene, night) {
+  const n = 380, pos = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) { pos[i * 3] = rr(-120, 120); pos[i * 3 + 1] = rr(1, 85); pos[i * 3 + 2] = rr(-120, 120); }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  const mat = new THREE.PointsMaterial({ color: night ? 0x90a0b4 : 0xfff2db, size: 0.28, sizeAttenuation: true, transparent: true, opacity: night ? 0.22 : 0.38, depthWrite: false, blending: THREE.AdditiveBlending });
+  const pts = new THREE.Points(g, mat); pts.frustumCulled = false; scene.add(pts); return { pts, n };
 }
 // soft drifting cloud layer (horizontal billboards seen from below)
 function makeClouds3D(scene, cfg, night) {
@@ -296,6 +336,7 @@ function buildScene(cfg) {
   const skyDome = skyObj.dome, skyTex = skyObj.tex;
   const cloudLayer = makeClouds3D(scene, cfg, night);
   const sunSprite = (night || over) ? null : addSun(scene, dusk);
+  const dust = makeDust(scene, night);
 
   // quality tier: shadows on desktop and capable phones only (and droppable at runtime if slow)
   const strong = !API.isTouch || ((navigator.hardwareConcurrency || 4) >= 6 && (navigator.deviceMemory || 4) >= 4);
@@ -317,9 +358,9 @@ function buildScene(cfg) {
   // ground (daytime colour canvas + micro-relief bump)
   const gtex = new THREE.CanvasTexture(Wd.gDay);
   gtex.colorSpace = THREE.SRGBColorSpace; gtex.anisotropy = 8;
-  tex.gbump.repeat.set(90, 90);
+  tex.gnorm.repeat.set(70, 70);
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(WORLD, WORLD),
-    new THREE.MeshStandardMaterial({ map: gtex, bumpMap: tex.gbump, bumpScale: 0.35, roughness: 0.96, metalness: 0 }));
+    new THREE.MeshStandardMaterial({ map: gtex, normalMap: tex.gnorm, normalScale: new THREE.Vector2(0.7, 0.7), roughness: 0.95, metalness: 0 }));
   ground.rotation.x = -Math.PI / 2; ground.receiveShadow = strong; scene.add(ground);
 
   // roads: flat ribbons merged into one geometry
@@ -329,7 +370,8 @@ function buildScene(cfg) {
 
   // buildings: box bodies (instanced) + gable roof prisms (instanced)
   const boxGeo = new THREE.BoxGeometry(1, 1, 1);
-  const bodyMat = new THREE.MeshStandardMaterial({ map: tex.wall, roughness: 0.88, metalness: 0.02 });
+  const bodyMat = new THREE.MeshStandardMaterial({ map: tex.wall, roughness: 0.86, metalness: 0.03,
+    emissiveMap: night ? tex.winEmis : null, emissive: new THREE.Color(night ? 0xffc864 : 0x000000), emissiveIntensity: night ? 1.4 : 0 });
   const bodies = new THREE.InstancedMesh(boxGeo, bodyMat, Wd.blds.length);
   bodies.frustumCulled = false; bodies.castShadow = strong; bodies.receiveShadow = strong;
   const gabled = Wd.blds.filter(b => b.gable);
@@ -376,24 +418,30 @@ function buildScene(cfg) {
     scene.add(dome);
   }
 
-  // trees: foliage cones + trunks (instanced)
+  // trees: two foliage layers (broadleaf = icosahedron, conifer = cone) + trunks, instanced for a fuller canopy
   const live = Wd.trees.filter(t => t.alive);
   if (live.length) {
-    const fol = new THREE.InstancedMesh(new THREE.ConeGeometry(1, 1, 6), new THREE.MeshLambertMaterial(), live.length);
-    const trunk = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.18, 0.28, 1, 4), new THREE.MeshLambertMaterial({ color: 0x5b4428 }), live.length);
-    fol.frustumCulled = trunk.frustumCulled = false;
+    const leafMat = new THREE.MeshStandardMaterial({ roughness: 0.95, metalness: 0, flatShading: true });
+    const low = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), leafMat, live.length);
+    const top = new THREE.InstancedMesh(new THREE.ConeGeometry(1, 1, 7), leafMat, live.length);
+    const trunk = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.16, 0.3, 1, 5), new THREE.MeshStandardMaterial({ color: 0x4a3620, roughness: 1 }), live.length);
+    low.frustumCulled = top.frustumCulled = trunk.frustumCulled = false;
+    const mt = new THREE.Matrix4();
     live.forEach((t, i) => {
-      const h = t.h, r = t.r;
-      m4.makeTranslation(sx(t.x), h * 0.62, sz(t.y));
-      fol.setMatrixAt(i, m4.clone().multiply(new THREE.Matrix4().makeScale(r * 1.3, h * 0.8, r * 1.3)));
-      const g = cfg.winter ? [0.42, 0.44, 0.4] : (t.garden ? [0.28, 0.46, 0.22] : [0.2, 0.36, 0.17]);
-      fol.setColorAt(i, col.setRGB(g[0] * t.tint, g[1] * t.tint, g[2] * t.tint).convertSRGBToLinear());
-      trunk.setMatrixAt(i, new THREE.Matrix4().makeTranslation(sx(t.x), h * 0.2, sz(t.y)).multiply(new THREE.Matrix4().makeScale(1, h * 0.45, 1)));
+      const h = t.h, r = t.r, broad = t.garden;
+      const g = cfg.winter ? [0.46, 0.47, 0.43] : (broad ? [0.3, 0.5, 0.24] : [0.19, 0.35, 0.16]);
+      const cl = col.setRGB(g[0] * t.tint, g[1] * t.tint, g[2] * t.tint).convertSRGBToLinear();
+      // lower canopy (rounded mass)
+      low.setMatrixAt(i, mt.makeTranslation(sx(t.x), h * 0.55, sz(t.y)).multiply(new THREE.Matrix4().makeScale(r * 1.35, h * 0.5, r * 1.35)));
+      low.setColorAt(i, cl);
+      // upper canopy (cone for conifers, smaller rounded cap for broadleaf)
+      top.setMatrixAt(i, mt.makeTranslation(sx(t.x), h * (broad ? 0.8 : 0.85), sz(t.y)).multiply(new THREE.Matrix4().makeScale(r * (broad ? 1.0 : 1.05), h * (broad ? 0.45 : 0.7), r * (broad ? 1.0 : 1.05))));
+      top.setColorAt(i, col.setRGB(g[0] * t.tint * 1.2, g[1] * t.tint * 1.2, g[2] * t.tint * 1.2).convertSRGBToLinear());
+      trunk.setMatrixAt(i, mt.makeTranslation(sx(t.x), h * 0.2, sz(t.y)).multiply(new THREE.Matrix4().makeScale(1, h * 0.45, 1)));
     });
-    fol.instanceMatrix.needsUpdate = true; if (fol.instanceColor) fol.instanceColor.needsUpdate = true;
-    trunk.instanceMatrix.needsUpdate = true;
-    fol.castShadow = strong;
-    scene.add(fol); scene.add(trunk);
+    for (const m of [low, top, trunk]) { m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; }
+    low.castShadow = top.castShadow = strong;
+    scene.add(low); scene.add(top); scene.add(trunk);
   }
 
   // bridge deck over the river on the main road (a solid obstacle; the gap is underneath it)
@@ -413,7 +461,7 @@ function buildScene(cfg) {
   // weather particles
   const weather = addWeather(scene, cfg);
 
-  return { scene, Wd, cfg, night, dusk, over, collBlds, pylons, wires, sun, sunDir, deckH, bxw, gtex, water, skyDome, skyTex, cloudLayer, sunSprite, shadows: strong, tex };
+  return { scene, Wd, cfg, night, dusk, over, collBlds, pylons, wires, sun, sunDir, deckH, bxw, gtex, water, skyDome, skyTex, cloudLayer, sunSprite, dust, shadows: strong, tex };
 }
 
 function addRoads(scene, Wd, night) {
@@ -1341,7 +1389,7 @@ async function start(cfg) {
   try {
     const comp = new THREE.EffectComposer(G.renderer);
     comp.addPass(new THREE.RenderPass(G.scene, G.camera));
-    if (G.shadows) { G.bloom = new THREE.UnrealBloomPass(new THREE.Vector2(G.cssW || 1280, G.cssH || 720), 0.55, 0.7, 0.85); comp.addPass(G.bloom); }
+    if (G.shadows) { G.bloom = new THREE.UnrealBloomPass(new THREE.Vector2(G.cssW || 1280, G.cssH || 720), 0.5, 0.85, 0.9); comp.addPass(G.bloom); }
     comp.addPass(new THREE.OutputPass());
     if (G.shadows) { G.fxaa = new THREE.ShaderPass(THREE.FXAAShader); comp.addPass(G.fxaa); }
     G.lensPass = new THREE.ShaderPass(LENS_SHADER); comp.addPass(G.lensPass);
@@ -1413,6 +1461,9 @@ function loop(now) {
   if (G.water && G.water.material.bumpMap) { G.water.material.bumpMap.offset.y += dt * 0.05; G.water.material.bumpMap.offset.x += dt * 0.012; }
   if (G.cloudLayer) for (const c of G.cloudLayer.children) { c.position.x += dt * 4; if (c.position.x > O + 320) c.position.x -= WORLD + 640; }
   if (G.sunSprite) { G.sunSprite.position.copy(G.quad.p).addScaledVector(G.sunDir, 2500); G.sunSprite.lookAt(G.camera.position); }
+  if (G.dust) { const a = G.dust.pts.geometry.attributes.position, cam = G.quad.p;
+    for (let i = 0; i < G.dust.n; i++) { a.array[i * 3] = ((a.array[i * 3] - cam.x + 6 * dt + 120) % 240 + 240) % 240 - 120 + cam.x; a.array[i * 3 + 2] = ((a.array[i * 3 + 2] - cam.z + 120) % 240 + 240) % 240 - 120 + cam.z; }
+    a.needsUpdate = true; }
   // camera follow (FPV, from the quad with a slight up-tilt)
   const Q = G.quad;
   G.camera.position.copy(Q.p);
